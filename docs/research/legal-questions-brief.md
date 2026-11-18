@@ -215,8 +215,28 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 25. Razorpay's Terms Part A §12.3 require us to tell Razorpay within 24 hours of any actual or suspected breach of
     customer data in our systems. Does that apply to MeetOps as a SaaS merchant, and how should it sit in our incident
     runbook next to the CERT-In 6-hour and DPDP 72-hour duties?
+26. Eval-data consent wording. Does the consent form in
+    [design-partner-kit/hinglish-eval-data-protocol.md](design-partner-kit/hinglish-eval-data-protocol.md) §3 (English
+    §3.1, Hindi §3.2) meet s. 5, s. 6(1)–(3) and Rule 3 of the DPDP Rules? Is our Hindi draft an adequate Eighth
+    Schedule version under s. 5(3) and s. 6(3), and should counsel or a certified translator sign it off? The Hindi text
+    is our own draft translation and is marked there as needing native-speaker review.
+27. Withdrawal and de-identified eval data. Under s. 6(4) a speaker may withdraw "at any time"; s. 6(5) says withdrawal
+    "shall not affect the legality of processing ... before its withdrawal"; s. 6(6) requires processing to cease
+    "within a reasonable time", and s. 8(7)(a) requires erasure "upon the Data Principal withdrawing her consent" unless
+    a law requires retention [L13]. The Act defines personal data as data about an individual "who is
+    identifiable by or in relation to such data" (s. 2(t)) [L13] and has no separate rule for anonymised or de-identified data.
+    May verified, de-identified reference transcripts (protocol §4.2) be kept after the speaker withdraws if they no
+    longer identify that speaker, or must they be deleted as the protocol now proposes (§5, "On withdrawal")? Does a
+    transcript of a real meeting stay "personal data" because colleagues could still recognise who spoke, and what
+    "reasonable time" for deletion would counsel accept (the protocol proposes 30 days)?
+28. Consent-record retention. Section 6(10) puts on the Data Fiduciary the burden to prove that notice was given and
+    consent obtained. How long should we keep signed eval consent forms, the consent register and withdrawal records
+    after the related data is deleted (protocol §5 leaves "[period for counsel]")? The Rules set no period for a
+    Fiduciary's own consent records. Rule 8(3) requires processing logs to be kept for at least one year, and Consent
+    Managers must keep consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is either a sensible
+    benchmark, and how does a longer period sit with s. 8(7) erasure and data minimisation?
 
-## Sources (fetched 2026-11-11)
+## Sources (fetched 2026-11-11; L13–L14 read 2026-11-18)
 
 | ID  | Source                                                                                                                                                                                                                                |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -232,3 +252,5 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 | L10 | European Commission, Guidelines on transparency obligations (Art. 50): https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-transparency-obligations                                                                       |
 | L11 | Houthoff, "AI Act: transparency obligations and the AI Omnibus Regulation" (1 Sep 2026); law-firm summary: https://www.houthoff.com/insights/news/ai-act-transparency-obligations-and-the-ai-omnibus-regulation/                      |
 | L12 | Taft, "AI-Powered Call Transcription Tools Present Class Action BIPA Risk" (8 Sep 2026); legal press on L1: https://www.privacyanddatasecurityinsight.com/2026/09/ai-powered-call-transcription-tools-present-class-action-bipa-risk/ |
+| L13 | Digital Personal Data Protection Act, 2023 (No. 22 of 2023), ss. 2(t), 6(4)–(6), 6(10), 8(7), Gazette text on MeitY: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                             |
+| L14 | DPDP Rules, 2025 (G.S.R. 846(E), Gazette No. 760), Rule 8(3) and First Schedule Part B item 4(c), MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf                                    |
