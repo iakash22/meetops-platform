@@ -225,7 +225,7 @@ describe('SearchPage', () => {
       ],
     };
     const search = vi.fn().mockResolvedValue(res);
-    const api: SearchApi = { search };
+    const api: SearchApi = { search, semantic: vi.fn() };
     setSearchApiOverride(api);
     renderApp('/search?q=billing');
     const list = await screen.findByRole('list', { name: 'Search results' });
@@ -237,7 +237,7 @@ describe('SearchPage', () => {
 
   it('does not search for fewer than two characters', async () => {
     const search = vi.fn();
-    const api: SearchApi = { search };
+    const api: SearchApi = { search, semantic: vi.fn() };
     setSearchApiOverride(api);
     renderApp('/search');
     expect(await screen.findByText('Start typing')).toBeInTheDocument();

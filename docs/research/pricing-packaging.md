@@ -1,5 +1,9 @@
 # Pricing and packaging (benchmark and proposal, November 2026)
 
+> **Update 2026-11-18:** a refreshed benchmark, a full cost-to-serve estimate and revised **proposals** (included hours,
+> extra pack, free tier, gates) are in [pricing-packaging-v2.md](pricing-packaging-v2.md). This doc stays as the
+> 2026-11-11 snapshot that other docs cite by section; v2 §1 lists every number that changed.
+
 - Checked **2026-11-11 (IST)**. Competitor prices are list prices per user per month unless noted, before tax.
 - **Localisation.** Our box fetches from India. Google Workspace, Microsoft 365 and Zoom served **INR** prices to it.
   Otter, Fireflies, Fathom, Read.ai, Krisp, Granola and Notta served **USD** to the same box (Otter's page says "Prices in

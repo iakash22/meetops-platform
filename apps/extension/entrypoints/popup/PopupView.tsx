@@ -18,6 +18,7 @@ import type { StatusPayload } from '../../src/lib/messages.js';
 import { UNPAIRED_PROMPT_MESSAGE } from '../../src/lib/pairing-messages.js';
 import { pendingLabel, type PendingTasks } from '../../src/lib/pending-tasks.js';
 import { OPEN_FROM_TOOLBAR } from './popup-errors.js';
+import { PrivacyPolicyLink } from '../../src/lib/privacy-link.js';
 
 const REASONS: Record<NonNullable<AuthStatus['reason']>, string> = {
   unauthorized: 'Your session was rejected.',
@@ -102,6 +103,9 @@ export function OpenFromToolbar() {
       <section className="mo-section" aria-label="Open from toolbar">
         <p className="mo-notice">{OPEN_FROM_TOOLBAR}</p>
       </section>
+      <footer className="mo-privacy-footer">
+        <PrivacyPolicyLink />
+      </footer>
     </PopupFrame>
   );
 }
@@ -154,7 +158,7 @@ export const PairingView = memo(function PairingView({ auth, onPair, onUnpair }:
       ) : (
         <>
           <p className="mo-muted">
-            Pair this browser with your MeetOps workspace to upload recordings.
+            Pair this browser with your MeetOps workspace to record and sync.
           </p>
           <button type="button" className="mo-btn mo-btn--primary" onClick={onPair}>
             Pair with MeetOps
@@ -198,7 +202,7 @@ export interface RecorderViewProps {
   now: number;
   /** Primary when paired (the main action), secondary while pairing is still the next step. */
   emphasis: 'primary' | 'secondary';
-  /** Pairing state, for the upload hint. Undefined while still asking the background. */
+  /** Pairing state, used for the unpaired start-blocked hint. Undefined while still asking the background. */
   paired?: boolean | undefined;
   /** A start attempt is in flight: Record stays disabled. */
   starting?: boolean;
@@ -502,6 +506,9 @@ export function PopupView({
         emphasis={auth?.state === 'paired' ? 'primary' : 'secondary'}
       />
       <ErrorToast message={error} />
+      <footer className="mo-privacy-footer">
+        <PrivacyPolicyLink />
+      </footer>
     </PopupFrame>
   );
 }

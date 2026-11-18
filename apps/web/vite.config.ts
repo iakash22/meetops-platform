@@ -6,6 +6,7 @@ import { loadEnv, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { localCsp } from './csp.config';
+import { missingPrivacyUrlWarning } from './src/lib/legal-url';
 
 /**
  * Long-lived vendor groups. Each group changes on its own release cadence, so splitting them
@@ -131,6 +132,10 @@ export default defineConfig(({ mode, command }) => {
   const rtPath = (env.VITE_REALTIME_PATH || '/socket.io').replace(/\/$/, '');
   const template = nginxTemplate();
   const devNonce = randomBytes(18).toString('base64url');
+  if (command === 'build' && mode === 'production') {
+    const warning = missingPrivacyUrlWarning(env.VITE_PRIVACY_URL);
+    if (warning) console.warn(warning);
+  }
   return {
     ...(command === 'serve' ? { html: { cspNonce: devNonce } } : {}),
     preview: { headers: { 'Content-Security-Policy': localCsp(template) } },
