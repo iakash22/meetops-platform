@@ -49,21 +49,44 @@ export class PrismaConsentSettingsRepository implements ConsentSettingsRepositor
     });
   }
 
-  async upsert(row: ConsentSettingsRecord): Promise<ConsentSettingsRecord> {
-    const data = {
-      mode: row.mode,
-      noticeText: row.noticeText,
-      skipExternalParticipants: row.skipExternalParticipants,
-      retentionDays: row.retentionDays,
-      currentConsentVersion: row.currentConsentVersion,
-      updatedAt: row.updatedAt,
-      updatedById: row.updatedById,
-    };
-    return this.ctx(row.organizationId, async (tx) => {
-      const saved = await tx.organizationConsentSettings.upsert({
-        where: { organizationId: row.organizationId },
-        create: { organizationId: row.organizationId, ...data },
-        update: data,
+  async update(
+    organizationId: string,
+    defaults: ConsentSettingsRecord,
+    mutate: (current: ConsentSettingsRecord) => ConsentSettingsRecord,
+  ): Promise<ConsentSettingsRecord> {
+    return this.ctx(organizationId, async (tx) => {
+      // A first write has no row to lock: insert the defaults (a concurrent insert of the same key waits for the
+      // other transaction, then does nothing), so every writer then locks the same committed row below.
+      await tx.$executeRaw`
+        INSERT INTO organization_consent_settings
+          (org_id, mode, notice_text, skip_external_participants, retention_days, current_consent_version,
+           updated_by_id, updated_at)
+        VALUES
+          (${organizationId}::uuid, ${defaults.mode}::"ConsentMethod", ${defaults.noticeText},
+           ${defaults.skipExternalParticipants}, ${defaults.retentionDays}, ${defaults.currentConsentVersion},
+           NULL, ${defaults.updatedAt})
+        ON CONFLICT (org_id) DO NOTHING`;
+      const [locked] = await tx.$queryRaw<Row[]>`
+        SELECT org_id::text AS "organizationId", mode::text AS mode, notice_text AS "noticeText",
+               skip_external_participants AS "skipExternalParticipants", retention_days AS "retentionDays",
+               current_consent_version AS "currentConsentVersion", updated_at AS "updatedAt",
+               updated_by_id::text AS "updatedById"
+        FROM organization_consent_settings
+        WHERE org_id = ${organizationId}::uuid
+        FOR UPDATE`;
+      if (!locked) throw new Error('consent settings row not visible after insert');
+      const next = mutate(toRecord(locked));
+      const saved = await tx.organizationConsentSettings.update({
+        where: { organizationId },
+        data: {
+          mode: next.mode,
+          noticeText: next.noticeText,
+          skipExternalParticipants: next.skipExternalParticipants,
+          retentionDays: next.retentionDays,
+          currentConsentVersion: next.currentConsentVersion,
+          updatedAt: next.updatedAt,
+          updatedById: next.updatedById,
+        },
         select,
       });
       return toRecord(saved);

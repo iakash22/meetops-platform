@@ -307,23 +307,23 @@ model User {
   meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
   auditEvents           AuditEvent[]
 
-  organizationsCreated    Organization[]           @relation("OrgCreator")
-  invitationsAccepted     Invitation[]             @relation("InvitationAcceptor")
+  organizationsCreated    Organization[]                @relation("OrgCreator")
+  invitationsAccepted     Invitation[]                  @relation("InvitationAcceptor")
   emailVerifications      EmailVerification[]
   passwordResets          PasswordReset[]
-  recordingSessions       RecordingSession[]       @relation("RecordingSessionCreator")
-  aiConfigsUpdated        AiOrganizationConfig[]   @relation("AiOrganizationConfigUpdater")
+  recordingSessions       RecordingSession[]            @relation("RecordingSessionCreator")
+  aiConfigsUpdated        AiOrganizationConfig[]        @relation("AiOrganizationConfigUpdater")
   consentSettingsUpdated  OrganizationConsentSettings[] @relation("ConsentSettingsUpdater")
-  consentAttestations     ConsentAttestation[]     @relation("ConsentAttester")
-  meetingConsentEvents    MeetingConsentEvent[]    @relation("MeetingConsentActor")
-  authDevices             AuthDevice[]             @relation("AuthDeviceOwner")
-  authTokenFamilies       AuthTokenFamily[]        @relation("AuthTokenFamilyOwner")
-  notifications           Notification[]           @relation("NotificationRecipient")
-  notificationPreferences NotificationPreference[] @relation("NotificationPreferenceOwner")
-  pushDeviceTokens        PushDeviceToken[]        @relation("PushDeviceTokenOwner")
-  calendarConnections     CalendarConnection[]     @relation("CalendarConnectionOwner")
-  calendarEvents          CalendarEvent[]          @relation("CalendarEventOwner")
-  calendarEventLinks      CalendarEventLink[]      @relation("CalendarEventLinkOwner")
+  consentAttestations     ConsentAttestation[]          @relation("ConsentAttester")
+  meetingConsentEvents    MeetingConsentEvent[]         @relation("MeetingConsentActor")
+  authDevices             AuthDevice[]                  @relation("AuthDeviceOwner")
+  authTokenFamilies       AuthTokenFamily[]             @relation("AuthTokenFamilyOwner")
+  notifications           Notification[]                @relation("NotificationRecipient")
+  notificationPreferences NotificationPreference[]      @relation("NotificationPreferenceOwner")
+  pushDeviceTokens        PushDeviceToken[]             @relation("PushDeviceTokenOwner")
+  calendarConnections     CalendarConnection[]          @relation("CalendarConnectionOwner")
+  calendarEvents          CalendarEvent[]               @relation("CalendarEventOwner")
+  calendarEventLinks      CalendarEventLink[]           @relation("CalendarEventLinkOwner")
 
   taskSyncRequests TaskSyncJob[] @relation("TaskSyncRequester")
 
@@ -684,15 +684,16 @@ model MeetingConsentEvent {
 
 /// Org recording-consent and media-retention settings (ADR-019 / ADR-020). One row per org.
 model OrganizationConsentSettings {
-  organizationId           String         @id @map("org_id") @db.Uuid
+  organizationId           String        @id @map("org_id") @db.Uuid
   /// all_parties_notified | all_parties_consented (ConsentMethod; no one-party mode).
-  mode                     ConsentMethod
-  noticeText               String         @map("notice_text")
-  skipExternalParticipants Boolean        @map("skip_external_participants")
-  retentionDays            Int            @map("retention_days")
-  currentConsentVersion    String         @map("current_consent_version")
-  updatedById              String?        @map("updated_by_id") @db.Uuid
-  updatedAt                DateTime       @map("updated_at") @db.Timestamptz(3)
+  mode                     ConsentMethod @default(all_parties_consented)
+  /// CHECK char_length 1..4000 and char_length(btrim(notice_text)) >= 1 (migration only).
+  noticeText               String        @map("notice_text")
+  skipExternalParticipants Boolean       @map("skip_external_participants")
+  retentionDays            Int           @default(90) @map("retention_days")
+  currentConsentVersion    String        @map("current_consent_version")
+  updatedById              String?       @map("updated_by_id") @db.Uuid
+  updatedAt                DateTime      @map("updated_at") @db.Timestamptz(3)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   updatedBy    User?        @relation("ConsentSettingsUpdater", fields: [updatedById], references: [id], onDelete: SetNull)

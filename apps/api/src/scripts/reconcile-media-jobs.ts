@@ -7,6 +7,8 @@
 import { pathToFileURL } from 'node:url';
 import { createPrismaClient } from '../shared/prisma/context.js';
 import { reconcileStaleMedia } from '../modules/media/application/reconcile.js';
+import { orgConsentVersion } from '../modules/consent-settings/domain/consent-settings.js';
+import { PrismaConsentSettingsRepository } from '../modules/consent-settings/infrastructure/prisma.repository.js';
 import {
   BullMqMediaJobQueue,
   createMediaQueueProducer,
@@ -29,6 +31,7 @@ export async function main(env: Record<string, string | undefined>) {
     return await reconcileStaleMedia({
       store: new PrismaStaleMediaStore(db),
       consents: new PrismaConsentRepository(db),
+      consentVersion: orgConsentVersion(new PrismaConsentSettingsRepository(db)),
       jobs,
       now: () => new Date(),
       olderThanMs,

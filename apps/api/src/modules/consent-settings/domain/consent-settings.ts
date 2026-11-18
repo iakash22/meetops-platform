@@ -19,7 +19,17 @@ export interface ConsentSettingsRecord {
 
 export interface ConsentSettingsRepository {
   get(organizationId: string): Promise<ConsentSettingsRecord | null>;
-  upsert(row: ConsentSettingsRecord): Promise<ConsentSettingsRecord>;
+  /**
+   * PATCH primitive. In ONE transaction (inside the org's RLS context): ensure the org's row exists (inserted from
+   * `defaults` when absent), lock it with SELECT ... FOR UPDATE, pass it to `mutate`, and write the result. Concurrent
+   * updates of one org serialise on the row lock, so each `mutate` sees the previous writer's committed row and a
+   * notice edit can never be lost or keep a stale currentConsentVersion.
+   */
+  update(
+    organizationId: string,
+    defaults: ConsentSettingsRecord,
+    mutate: (current: ConsentSettingsRecord) => ConsentSettingsRecord,
+  ): Promise<ConsentSettingsRecord>;
 }
 
 export function defaultConsentSettingsRecord(
@@ -36,6 +46,17 @@ export function defaultConsentSettingsRecord(
     updatedAt: now,
     updatedById: null,
   };
+}
+
+/**
+ * Consent version an org accepts right now: its stored currentConsentVersion (the repository reads inside the org's
+ * RLS context), or the global CURRENT_CONSENT_VERSION when the org has no settings row yet.
+ */
+export function orgConsentVersion(
+  settings: Pick<ConsentSettingsRepository, 'get'>,
+): (organizationId: string) => Promise<string> {
+  return async (organizationId) =>
+    (await settings.get(organizationId))?.currentConsentVersion ?? CURRENT_CONSENT_VERSION;
 }
 
 export function cloneConsentSettings(row: ConsentSettingsRecord): ConsentSettingsRecord {

@@ -30,7 +30,7 @@ export interface ConsentSettingsPluginOptions {
   audit: AuditLog;
   settings: ConsentSettingsRepository;
   now: () => Date;
-  /** ROUTE_RATE_LIMITS.consentSettingsWrite (PATCH). Omitted: unmetered until the rate-limit PR. */
+  /** ROUTE_RATE_LIMITS.consentSettingsWrite (PATCH). */
   routeLimits?: RouteLimiter;
 }
 

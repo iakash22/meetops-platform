@@ -7,6 +7,7 @@ import { DirectoryAccess } from '../directory/access.js';
 import type { ResolveCaller } from '../directory/http/route-kit.js';
 import type { ModuleDeps } from '../index.js';
 import { UploadService } from './application/upload.service.js';
+import { orgConsentVersion } from '../consent-settings/domain/consent-settings.js';
 import { uploadRoutes } from './http/uploads.routes.js';
 import { RecordingSessionService } from './application/recording-session.service.js';
 import { recordingSessionRoutes } from './http/recording-sessions.routes.js';
@@ -53,6 +54,8 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
     meetings: deps.meetings,
     now: () => deps.clock.now(),
     consentEnforcement: deps.consentEnforcementEnabled === true,
+    // Uploads, sessions and the Consent API accept only the org's stored consent version (global when no row).
+    consentVersion: orgConsentVersion(deps.consentSettings),
   };
   const { extensionBearer, sessionVerifier } = opts;
   const bearer = extensionBearer && sessionVerifier ? extensionBearer : undefined;
@@ -71,6 +74,7 @@ export default async function mediaModule(app: FastifyInstance, opts: MediaPlugi
         meetingConsents: media.meetingConsents,
         meetings: deps.meetings,
         now: mediaDeps.now,
+        consentVersion: mediaDeps.consentVersion,
       }),
       caller,
       writeCaller,

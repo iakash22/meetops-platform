@@ -5,7 +5,7 @@ import {
 } from '@meetops/contracts';
 import type { DirectoryCaller } from '../../directory/access.js';
 import { MeetingNotFoundError, type MeetingRepository } from '../../meetings/domain/meeting.js';
-import { checkConsentInput } from '../domain/consent.js';
+import { checkConsentInput, type ConsentVersionResolver } from '../domain/consent.js';
 import {
   consentState,
   type MeetingConsentEventRecord,
@@ -20,6 +20,8 @@ export interface MeetingConsentDeps {
   meetingConsents: MeetingConsentRepository;
   meetings: MeetingRepository;
   now: () => Date;
+  /** The org's current consent version (stored settings, else CURRENT_CONSENT_VERSION), read server-side. */
+  consentVersion: ConsentVersionResolver;
 }
 
 /**
@@ -41,7 +43,7 @@ export class MeetingConsentService {
     const org = await this.meeting(c, meetingId);
     authorizeMedia(c, 'create', 'RecordingSession');
     const now = this.d.now();
-    const input = checkConsentInput(body, now);
+    const input = checkConsentInput(body, now, await this.d.consentVersion(org));
     return this.d.meetingConsents.append({
       organizationId: org,
       meetingId,
@@ -78,7 +80,7 @@ export class MeetingConsentService {
     const latest = events[0] ?? null;
     return {
       meetingId,
-      ...consentState(latest),
+      ...consentState(latest, await this.d.consentVersion(org)),
       latest: latest ? toWire(latest) : null,
       events: events.map(toWire),
     };

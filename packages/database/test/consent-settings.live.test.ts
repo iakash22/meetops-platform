@@ -97,5 +97,38 @@ describe.skipIf(!APP_URL || !OWNER_URL)('organization_consent_settings (live)', 
         }),
       ),
     ).rejects.toThrow();
+    // CHECK char_length(btrim(notice_text)) >= 1: whitespace-only notices are rejected by the DB too.
+    for (const blank of [' ', '   ', '\n\t ']) {
+      await expect(
+        runWithOrganizationContext(app, orgA, (tx) =>
+          tx.organizationConsentSettings.update({
+            where: { organizationId: orgA },
+            data: { noticeText: blank, updatedAt: now },
+          }),
+        ),
+      ).rejects.toThrow(/notice_text_not_blank_check/);
+    }
+  });
+
+  it('defaults retention_days to 90 and mode to all_parties_consented', async () => {
+    const orgC = randomUUID();
+    await owner.organization.create({
+      data: { id: orgC, name: 'Consent C', slug: `consent-c-${orgC}` },
+    });
+    try {
+      const [row] = await runWithOrganizationContext(app, orgC, async (tx) => {
+        await tx.$executeRaw`
+          INSERT INTO organization_consent_settings
+            (org_id, notice_text, skip_external_participants, current_consent_version, updated_at)
+          VALUES (${orgC}::uuid, 'C notice', false, '2026-10', now())`;
+        return tx.$queryRaw<{ retention_days: number; mode: string }[]>`
+          SELECT retention_days, mode::text AS mode FROM organization_consent_settings
+          WHERE org_id = ${orgC}::uuid`;
+      });
+      expect(row).toEqual({ retention_days: 90, mode: 'all_parties_consented' });
+    } finally {
+      await owner.organizationConsentSettings.deleteMany({ where: { organizationId: orgC } });
+      await owner.organization.deleteMany({ where: { id: orgC } });
+    }
   });
 });

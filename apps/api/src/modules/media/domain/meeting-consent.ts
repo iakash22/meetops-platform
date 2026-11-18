@@ -1,10 +1,9 @@
 import {
-  CURRENT_CONSENT_VERSION,
   type ConsentMethod,
   type MeetingConsentEventType,
   type MeetingConsentState,
 } from '@meetops/contracts';
-import { ConsentRejectedError } from './consent.js';
+import { ConsentRejectedError, type ConsentVersionResolver } from './consent.js';
 
 /** A stored meeting_consent_events row (append-only ledger), as the API sees it. */
 export interface MeetingConsentEventRecord {
@@ -33,27 +32,37 @@ export interface MeetingConsentRepository {
   ): Promise<MeetingConsentEventRecord[]>;
 }
 
-/** Derived state: the latest event wins, so a revocation supersedes every earlier grant. */
-export function consentState(latest: MeetingConsentEventRecord | null): {
+/**
+ * Derived state: the latest event wins, so a revocation supersedes every earlier grant. `acceptedVersion` is the org's
+ * current consent version (ConsentVersionResolver).
+ */
+export function consentState(
+  latest: MeetingConsentEventRecord | null,
+  acceptedVersion: string,
+): {
   state: MeetingConsentState;
   valid: boolean;
 } {
   if (!latest) return { state: 'none', valid: false };
   return {
     state: latest.eventType,
-    valid: latest.eventType === 'granted' && latest.consentVersion === CURRENT_CONSENT_VERSION,
+    valid: latest.eventType === 'granted' && latest.consentVersion === acceptedVersion,
   };
 }
 
-/** What enforcement needs: the ledger (optional, missing = fail closed) and the CONSENT_ENFORCEMENT_ENABLED flag. */
+/**
+ * What enforcement needs: the ledger (optional, missing = fail closed), the CONSENT_ENFORCEMENT_ENABLED flag and the
+ * org's current consent version.
+ */
 export interface MeetingConsentGate {
   meetingConsents?: MeetingConsentRepository | undefined;
   consentEnforcement?: boolean | undefined;
+  consentVersion: ConsentVersionResolver;
 }
 
 /**
  * CONSENT_ENFORCEMENT_ENABLED: media capture/upload for a meeting requires the meeting's latest consent event to be a
- * grant for CURRENT_CONSENT_VERSION. Fails closed: no meeting, no ledger wired, no event, a revocation or an old
+ * grant for the org's current consent version (its stored settings, else CURRENT_CONSENT_VERSION). Fails closed: no meeting, no ledger wired, no event, a revocation or an old
  * version all reject with 422. A no-op while the flag is off (default), so existing clients keep working.
  */
 export async function enforceMeetingConsent(
@@ -65,7 +74,7 @@ export async function enforceMeetingConsent(
   if (!meetingId || !g.meetingConsents) throw new ConsentRejectedError('CONSENT_REQUIRED');
   const [latest] = await g.meetingConsents.list(organizationId, meetingId, 1);
   if (!latest || latest.eventType !== 'granted') throw new ConsentRejectedError('CONSENT_REQUIRED');
-  if (latest.consentVersion !== CURRENT_CONSENT_VERSION) {
+  if (latest.consentVersion !== (await g.consentVersion(organizationId))) {
     throw new ConsentRejectedError('CONSENT_VERSION_UNSUPPORTED');
   }
 }
