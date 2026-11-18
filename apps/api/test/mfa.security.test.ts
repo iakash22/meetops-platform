@@ -16,7 +16,7 @@
  *
  * No real secrets: the TOTP secret below is the RFC 6238 test vector key, and every token is generated at run time.
  */
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,13 +28,25 @@ import type { GoogleIdentity } from '../src/modules/auth/application/google-oidc
 import { InMemorySessionRepository } from '../src/modules/auth/infrastructure/in-memory-session.repository.js';
 import { PrismaSessionRepository } from '../src/modules/auth/infrastructure/prisma/prisma-session.repository.js';
 import {
+  hasFreshStepUp,
   SESSION_AUTH_LEVELS,
   toSessionAuthLevel,
   type Session,
 } from '../src/modules/auth/domain/session.js';
 import { InMemoryAuditLog } from '../src/modules/auth/domain/audit.js';
 import { InMemoryUserRepository } from '../src/modules/users/infrastructure/in-memory-user.repository.js';
-import { buildApp, Client, ORIGIN, PASSWORD, SID, signupAndLogin, type App } from './helpers.js';
+import { InMemoryMfaRepository } from '../src/modules/mfa/infrastructure/in-memory-mfa.repository.js';
+import { sequentialAccountClaims } from '../src/modules/auth/application/account-claims.js';
+import {
+  buildApp,
+  Client,
+  CSRF as CSRF_COOKIE,
+  ORIGIN,
+  PASSWORD,
+  SID,
+  signupAndLogin,
+  type App,
+} from './helpers.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
@@ -94,6 +106,12 @@ const STEP_UP_ROUTES = [
 /** Contracted (CONSENT_UPLOAD_PATHS.consentSettings) but not served by the API yet; billing (ADR-017) has no route. */
 const STEP_UP_NOT_BUILT = [
   { category: 'retention', method: 'PATCH', url: '/orgs/:organizationId/settings/consent' },
+] as const;
+
+/** API source files allowed to reference the elevated session level (grows only with reviewed MFA code). */
+const MFA_LEVEL_ALLOWLIST = [
+  'modules/auth/domain/session.ts',
+  'modules/auth/infrastructure/prisma/prisma-session.repository.ts',
 ] as const;
 
 /* ---------------------------------------------- RFC 6238 helpers ---------------------------------------------- */
@@ -214,7 +232,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     expect(sql).toMatch(/"auth_level" TEXT NOT NULL DEFAULT 'password'/);
   });
 
-  it('MFA-SES-02: the Prisma session repository never writes authLevel "mfa": a session without a level is stored as "password"', async () => {
+  it('MFA-SES-02: the Prisma session repository writes "password" for a session without a level, and mfaAt only on an "mfa" session', async () => {
     const writes: Record<string, unknown>[] = [];
     const fakeDb = {
       session: {
@@ -234,7 +252,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     } as unknown as DatabaseClient;
     const repo = new PrismaSessionRepository(fakeDb);
     const now = new Date('2026-11-09T00:00:00.000Z');
-    await repo.create({
+    const base: Session = {
       id: '00000000-0000-4000-8000-000000000001',
       userId: '00000000-0000-4000-8000-000000000002',
       tokenHash: 'h',
@@ -245,14 +263,32 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
       revokedAt: null,
       ip: null,
       userAgent: null,
-    });
+    };
+    await repo.create(base);
     expect(writes).toHaveLength(1);
-    // N-4 (OIDC hardening) made the level explicit ("password" | "google"); what must never be written is "mfa".
+    // N-4 (OIDC hardening) made the level explicit; a session without one is never elevated.
     expect(writes[0]!.authLevel).toBe(PLANNED.levels.password);
-    expect(writes[0]!.authLevel).not.toBe(PLANNED.levels.mfa);
-    // Reading back an unknown level (e.g. "mfa" before MFA ships) is not trusted: it maps to "password".
-    expect(toSessionAuthLevel(PLANNED.levels.mfa)).toBe(PLANNED.levels.password);
-    expect(SESSION_AUTH_LEVELS).not.toContain(PLANNED.levels.mfa);
+    expect(writes[0]!.mfaAt).toBeNull();
+    // ADR-021: a step-up time without the mfa level is dropped (the DB CHECK sessions_mfa_at_level_check agrees).
+    const stray = await repo.create({
+      ...base,
+      id: '00000000-0000-4000-8000-000000000003',
+      mfaAt: now,
+    });
+    expect(writes[1]!.mfaAt).toBeNull();
+    expect(stray.mfaAt).toBeNull();
+    const elevated = await repo.create({
+      ...base,
+      id: '00000000-0000-4000-8000-000000000004',
+      authLevel: PLANNED.levels.mfa,
+      mfaAt: now,
+    });
+    expect(writes[2]!.authLevel).toBe(PLANNED.levels.mfa);
+    expect(elevated.mfaAt?.getTime()).toBe(now.getTime());
+    // Unknown stored levels are not trusted; "mfa" is now a real level.
+    expect(toSessionAuthLevel('superuser')).toBe(PLANNED.levels.password);
+    expect(toSessionAuthLevel(PLANNED.levels.mfa)).toBe(PLANNED.levels.mfa);
+    expect(SESSION_AUTH_LEVELS).toContain(PLANNED.levels.mfa);
   });
 
   it('MFA-SES-03: a password login does not create an elevated session', async () => {
@@ -348,32 +384,34 @@ describe('ADR-021 baseline: step-up route inventory (active)', () => {
   });
 });
 
-describe('ADR-021 not built yet (active pins: when one fails, un-skip the TODO(ADR-021) suites below)', () => {
-  it('no /auth/mfa route is registered', async () => {
+describe('ADR-021 build state (active pins: when one fails, un-skip the matching TODO(ADR-021) suite below)', () => {
+  it('pieces (b) + (c): status, enrol, confirm, the login challenge, step-up, regenerate and factor removal are served', async () => {
     const app = await buildApp();
-    for (const p of [
-      PLANNED.paths.status,
-      PLANNED.paths.totpEnroll,
-      PLANNED.paths.challenge,
-      PLANNED.paths.stepUp,
-    ]) {
-      expect(
-        app.hasRoute({ method: 'POST', url: p }) || app.hasRoute({ method: 'GET', url: p }),
-      ).toBe(false);
-    }
-    expect(app.printRoutes({ commonPrefix: false })).not.toMatch(/mfa/i);
+    expect(app.hasRoute({ method: 'GET', url: PLANNED.paths.status })).toBe(true);
+    for (const p of [PLANNED.paths.totpEnroll, PLANNED.paths.totpConfirm, PLANNED.paths.challenge])
+      expect(app.hasRoute({ method: 'POST', url: p }), p).toBe(true);
+    // MFA-CSRF-02: enrolment and the challenge are never a GET.
+    for (const p of [PLANNED.paths.totpEnroll, PLANNED.paths.totpConfirm, PLANNED.paths.challenge])
+      expect(app.hasRoute({ method: 'GET', url: p }), p).toBe(false);
+    for (const p of [PLANNED.paths.stepUp, PLANNED.paths.recoveryCodes])
+      expect(app.hasRoute({ method: 'POST', url: p }), p).toBe(true);
+    expect(app.hasRoute({ method: 'DELETE', url: '/auth/mfa/factors/:factorId' })).toBe(true);
     await app.close();
   });
 
-  it('no API source sets a session authLevel to "mfa" (nothing can elevate a session today)', () => {
-    // N-4 legitimately writes "password" / "google"; the pin is on the elevated value only.
+  it('only the allowlisted MFA files reference the "mfa" session level (nothing else can elevate a session)', () => {
+    // N-4 legitimately writes "password" / "google". ADR-021 piece (a) adds the level to the domain and its storage
+    // mapping only; later pieces add the elevation path (AuthService.elevate) and the gates to this list, nothing else.
     const setsMfa =
       /(?:authLevel|auth_level)['"]?\s*(?:[:=]|===?|!==?)\s*['"`]mfa['"`]|['"`]mfa['"`]\s*(?:===?|!==?)\s*\w*[aA]uth_?[lL]evel|SESSION_AUTH_LEVELS\s*=\s*\[[^\]]*['"`]mfa['"`]/;
     for (const sample of ["authLevel: 'mfa'", 'session.authLevel = "mfa"', "auth_level === 'mfa'"])
       expect(setsMfa.test(sample), sample).toBe(true);
     expect(setsMfa.test("authLevel: 'google'")).toBe(false);
-    const offenders = walk(API_SRC).filter((f) => setsMfa.test(readFileSync(f, 'utf8')));
-    expect(offenders).toEqual([]);
+    const offenders = walk(API_SRC)
+      .filter((f) => setsMfa.test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(API_SRC.length + 1).replaceAll('\\', '/'))
+      .sort();
+    expect(offenders).toEqual([...MFA_LEVEL_ALLOWLIST].sort());
   });
 });
 
@@ -407,15 +445,15 @@ describe('ADR-021 baseline: TOTP material in logs (active)', () => {
  * PART 2 — PENDING, TODO(ADR-021). Proposed interface: PLANNED above.
  * ============================================================================================================== */
 
-describe('TODO(ADR-021) log redaction gaps before MFA ships (blocked by P-1 / P-4)', () => {
+describe('ADR-021 log redaction of MFA fields (P-1 / P-4 fixed in @meetops/logger)', () => {
   // P-1: CONDITIONAL_REDACT_KEYS treats a `code` that looks like /^\d{1,6}$/ as an error code and keeps it.
-  it.skip('MFA-SEC-05 (P-1): a 6-digit TOTP sent as `code` is redacted', () => {
+  it('MFA-SEC-05 (P-1): a 6-digit TOTP sent as `code` is redacted', () => {
     expect(
       JSON.stringify(redactDeep({ body: { code: '492039' } }, DEFAULT_REDACT_KEYS)),
     ).not.toContain('492039');
   });
   // P-4: DEFAULT_REDACT_KEYS has no MFA field names.
-  it.skip('MFA-SEC-06 (P-4): MFA field names are always redacted', () => {
+  it('MFA-SEC-06 (P-4): MFA field names are always redacted', () => {
     const body = {
       totpCode: '492039',
       recoveryCode: 'abcd-efgh-ijkl',
@@ -436,9 +474,11 @@ async function enrollTotp(c: Client) {
   expect(e.statusCode).toBe(201);
   const { factorId, otpauthUri } = e.json<{ factorId: string; otpauthUri: string }>();
   const secret = secretFromUri(otpauthUri);
+  // Confirm with the previous step (inside the ±1 window, OQ-2), so a test's next code for "now" is not a replay of the
+  // confirm code (the replay guard only accepts steps after the last one used).
   const ok = await c.post(PLANNED.paths.totpConfirm, {
     factorId,
-    [PLANNED.totpField]: totp(secret, Date.now()),
+    [PLANNED.totpField]: totp(secret, Date.now() - 30_000),
   });
   expect(ok.statusCode).toBe(200);
   const { recoveryCodes } = ok.json<{ recoveryCodes: string[] }>();
@@ -449,7 +489,7 @@ async function sessionLevel(c: Client) {
     ?.authLevel;
 }
 
-describe.skip('TODO(ADR-021) enrollment (MFA-ENR)', () => {
+describe('ADR-021 enrollment (MFA-ENR)', () => {
   it('MFA-ENR-01/02: enroll returns an otpauth URI with a >=160-bit base32 secret, issuer and account label', async () => {
     const app = await buildApp();
     const c = await signupAndLogin(app, 'enr1@example.com');
@@ -529,7 +569,7 @@ describe.skip('TODO(ADR-021) enrollment (MFA-ENR)', () => {
   });
 });
 
-describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
+describe('ADR-021 TOTP verification (MFA-TOTP)', () => {
   async function mfaUser(app: App, email: string) {
     const c = await signupAndLogin(app, email);
     const f = await enrollTotp(c);
@@ -570,14 +610,18 @@ describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
   });
 
   it('MFA-TOTP-03: codes one step either side are accepted, two steps are not', async () => {
+    // Adapted: enrolment already used the previous step (replay guard), so the HTTP case probes the window forwards;
+    // the backwards slot is covered by the RFC 6238 unit tests in mfa-core.test.ts.
     const app = await buildApp();
     const { c, secret } = await mfaUser(app, 'totp3@example.com');
-    const far = await c.post(PLANNED.paths.challenge, {
-      [PLANNED.totpField]: totp(secret, Date.now() - 65_000),
-    });
-    expect([400, 401]).toContain(far.statusCode);
+    for (const offset of [-65_000, 65_000]) {
+      const far = await c.post(PLANNED.paths.challenge, {
+        [PLANNED.totpField]: totp(secret, Date.now() + offset),
+      });
+      expect([400, 401]).toContain(far.statusCode);
+    }
     const near = await c.post(PLANNED.paths.challenge, {
-      [PLANNED.totpField]: totp(secret, Date.now() - 30_000),
+      [PLANNED.totpField]: totp(secret, Date.now() + 30_000),
     });
     expect(near.statusCode).toBe(200);
     await app.close();
@@ -623,7 +667,314 @@ describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
   });
 });
 
-describe.skip('TODO(ADR-021) recovery codes (MFA-RC)', () => {
+/* ------------------------------------------------------------------------------------------------------------------
+ * ADR-021 piece (b) cases. The behaviour follows the decided defaults of the plan's §14 (ADR-021 Amendment 1). The
+ * cases below were copied from PR #470 (the plan update that adds MFA-TO and the OQ-17 wording) before it merged.
+ * ---------------------------------------------------------------------------------------------------------------- */
+const MFA_COOKIE = SID.replace(/meetops_sid$/, 'meetops_mfa');
+
+async function enrolledThenLoggedOut(app: App, email: string) {
+  const c = await signupAndLogin(app, email);
+  const f = await enrollTotp(c);
+  expect((await c.post('/auth/logout')).statusCode).toBe(204);
+  return f;
+}
+async function passwordStep(app: App, email: string) {
+  const c = new Client(app);
+  const login = await c.post('/auth/login', { email, password: PASSWORD });
+  return { c, login };
+}
+
+describe('ADR-021 OQ-17 login challenge (copied from #470)', () => {
+  it('OQ-17: an MFA login gets a short-lived HttpOnly SameSite=Strict challenge cookie, never a session', async () => {
+    const app = await buildApp();
+    await enrolledThenLoggedOut(app, 'oq17a@example.com');
+    const { c, login } = await passwordStep(app, 'oq17a@example.com');
+    expect(login.statusCode).toBe(200);
+    expect(login.headers['cache-control']).toMatch(/no-store/);
+    const body = login.json<{ mfaRequired?: boolean; organizations?: unknown[] }>();
+    expect(body.mfaRequired).toBe(true);
+    expect(body.organizations ?? []).toEqual([]);
+    expect(sidOf(c)).toBeUndefined();
+    const ch = login.cookies.find((k) => k.name === MFA_COOKIE);
+    expect(ch?.httpOnly).toBe(true);
+    expect(String(ch?.sameSite).toLowerCase()).toBe('strict');
+    expect(ch?.maxAge).toBeLessThanOrEqual(300);
+    // The challenge cannot call org APIs or read the session.
+    for (const url of ['/orgs', '/auth/session']) {
+      const r = await c.get(url);
+      expect(r.statusCode, url).toBe(403);
+      expect(errCode(r), url).toBe(PLANNED.errors.mfaRequired);
+    }
+    await app.close();
+  });
+
+  it('OQ-17: the challenge is single-use (a copied cookie is dead once the login completed)', async () => {
+    const app = await buildApp();
+    const { secret } = await enrolledThenLoggedOut(app, 'oq17b@example.com');
+    const { c } = await passwordStep(app, 'oq17b@example.com');
+    const copy = new Client(app);
+    copy.jar = new Map(c.jar);
+    expect(
+      (await c.post(PLANNED.paths.challenge, { [PLANNED.totpField]: totp(secret, Date.now()) }))
+        .statusCode,
+    ).toBe(200);
+    const again = await copy.post(PLANNED.paths.challenge, {
+      [PLANNED.totpField]: totp(secret, Date.now() + 30_000),
+    });
+    expect(again.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it('OQ-17: without a challenge the endpoint is 401 and costs nothing', async () => {
+    const app = await buildApp();
+    const r = await new Client(app).post(PLANNED.paths.challenge, {
+      [PLANNED.totpField]: '123456',
+    });
+    expect(r.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it('OQ-17: logout with only a challenge drops it (204)', async () => {
+    const app = await buildApp();
+    await enrolledThenLoggedOut(app, 'oq17d@example.com');
+    const { c } = await passwordStep(app, 'oq17d@example.com');
+    expect(c.jar.has(MFA_COOKIE)).toBe(true);
+    expect((await c.post('/auth/logout')).statusCode).toBe(204);
+    expect(c.jar.has(MFA_COOKIE)).toBe(false);
+    await app.close();
+  });
+
+  it('MFA-ERR-01: a wrong password looks the same for MFA and non-MFA users (no challenge, no hint)', async () => {
+    const app = await buildApp();
+    await enrolledThenLoggedOut(app, 'err1a@example.com');
+    await signupAndLogin(app, 'err1b@example.com');
+    const [a, b] = await Promise.all(
+      ['err1a@example.com', 'err1b@example.com'].map((email) =>
+        new Client(app).post('/auth/login', { email, password: 'wrong-password-1' }),
+      ),
+    );
+    expect(a!.statusCode).toBe(b!.statusCode);
+    const strip = (r: typeof a) => {
+      const { error } = r!.json<{ error: { code: string; message: string } }>();
+      return { code: error.code, message: error.message };
+    };
+    expect(strip(a)).toEqual(strip(b));
+    expect(a!.cookies.some((k) => k.name === MFA_COOKIE)).toBe(false);
+    await app.close();
+  });
+
+  it('MFA-ERR-02: wrong TOTP, wrong recovery code and a used recovery code give the same generic error', async () => {
+    const app = await buildApp();
+    const { recoveryCodes } = await enrolledThenLoggedOut(app, 'err2@example.com');
+    const first = await passwordStep(app, 'err2@example.com');
+    expect(
+      (await first.c.post(PLANNED.paths.challenge, { [PLANNED.recoveryField]: recoveryCodes[0] }))
+        .statusCode,
+    ).toBe(200);
+    const { c } = await passwordStep(app, 'err2@example.com');
+    const bodies = [];
+    for (const proof of [
+      { [PLANNED.totpField]: '000000' },
+      { [PLANNED.recoveryField]: 'AAAAA-AAAAA' },
+      { [PLANNED.recoveryField]: recoveryCodes[0] },
+    ]) {
+      const r = await c.post(PLANNED.paths.challenge, proof);
+      expect(r.statusCode).toBe(400);
+      bodies.push(errCode(r));
+    }
+    expect(new Set(bodies)).toEqual(new Set([PLANNED.errors.invalidCode]));
+    await app.close();
+  });
+
+  it('MFA-TOTP-08 (OQ-4): password and MFA failures share one lockout budget', async () => {
+    const app = await buildApp({ sleep: async () => {} });
+    const { secret } = await enrolledThenLoggedOut(app, 'totp8@example.com');
+    const bad = new Client(app);
+    for (let i = 0; i < 6; i++)
+      await bad.post('/auth/login', { email: 'totp8@example.com', password: 'wrong-password-1' });
+    const { c } = await passwordStep(app, 'totp8@example.com');
+    for (let i = 0; i < 4; i++)
+      expect(
+        (await c.post(PLANNED.paths.challenge, { [PLANNED.totpField]: '000000' })).statusCode,
+      ).toBe(400);
+    const good = await c.post(PLANNED.paths.challenge, {
+      [PLANNED.totpField]: totp(secret, Date.now()),
+    });
+    expect(good.statusCode).toBe(429);
+    await app.close();
+  });
+
+  it('MFA-RC-07: recovery-code attempts share the MFA limits and lockout', async () => {
+    const app = await buildApp({ sleep: async () => {} });
+    const { recoveryCodes } = await enrolledThenLoggedOut(app, 'rc7@example.com');
+    const { c } = await passwordStep(app, 'rc7@example.com');
+    for (let i = 0; i < 10; i++)
+      await c.post(PLANNED.paths.challenge, { [PLANNED.recoveryField]: 'AAAAA-AAAAA' });
+    const good = await c.post(PLANNED.paths.challenge, {
+      [PLANNED.recoveryField]: recoveryCodes[0],
+    });
+    expect(good.statusCode).toBe(429);
+    await app.close();
+  });
+});
+
+describe('ADR-021 enrolment hardening (copied from #470)', () => {
+  it('MFA-ENR-08: an unverified email cannot enrol (N-1 pre-hijack defence)', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'enr8@example.com', PASSWORD, { verify: false });
+    const r = await c.post(PLANNED.paths.totpEnroll, {});
+    expect(r.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('MFA-CSRF-02: every MFA POST refuses a missing CSRF token or a foreign Origin', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'csrf2@example.com');
+    for (const url of [
+      PLANNED.paths.totpEnroll,
+      PLANNED.paths.totpConfirm,
+      PLANNED.paths.challenge,
+    ]) {
+      const noToken = await app.inject({
+        method: 'POST',
+        url,
+        payload: {},
+        headers: { cookie: c.cookie, origin: ORIGIN },
+      });
+      expect(noToken.statusCode, url).toBe(403);
+      const evil = await c.post(url, {}, { origin: 'https://evil.example' });
+      expect(evil.statusCode, url).toBe(403);
+    }
+    await app.close();
+  });
+
+  it('MFA-CSRF-03: the enrolment and confirm responses are no-store and cannot be framed', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'csrf3@example.com');
+    const e = await c.post(PLANNED.paths.totpEnroll, {});
+    const { factorId, otpauthUri } = e.json<{ factorId: string; otpauthUri: string }>();
+    const ok = await c.post(PLANNED.paths.totpConfirm, {
+      factorId,
+      [PLANNED.totpField]: totp(secretFromUri(otpauthUri), Date.now()),
+    });
+    for (const r of [e, ok]) {
+      expect(r.headers['cache-control']).toMatch(/no-store/);
+      expect(String(r.headers['content-security-policy'])).toMatch(/frame-ancestors 'none'/);
+    }
+    await app.close();
+  });
+
+  it('confirm turns MFA on, rotates the session to level mfa with a new CSRF token and signs out other sessions', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'conf1@example.com');
+    const other = new Client(app);
+    await other.post('/auth/login', { email: 'conf1@example.com', password: PASSWORD });
+    const sid = sidOf(c);
+    const csrf = c.jar.get(CSRF_COOKIE);
+    await enrollTotp(c);
+    expect(sidOf(c)).not.toBe(sid);
+    expect(c.jar.get(CSRF_COOKIE)).not.toBe(csrf);
+    expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
+    expect((await other.get('/auth/session')).statusCode).toBe(401);
+    // Confirm does not stamp a step-up: the first sensitive action still asks for the code (ENR-06).
+    expect((await c.get('/orgs')).statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('MFA-AUD-01/02 (piece b): enrol, confirm and challenge success/failure are audited pre-tenant, without secrets', async () => {
+    const audit = new InMemoryAuditLog();
+    const app = await buildApp({ audit });
+    const { secret, recoveryCodes, otpauthUri } = await enrolledThenLoggedOut(
+      app,
+      'audb@example.com',
+    );
+    const { c } = await passwordStep(app, 'audb@example.com');
+    await c.post(PLANNED.paths.challenge, { [PLANNED.totpField]: '000000' });
+    await c.post(PLANNED.paths.challenge, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    const mfaEvents = audit.events.filter((e) => String(e.action).startsWith('auth.mfa.'));
+    expect(mfaEvents.map((e) => e.action as string)).toEqual(
+      expect.arrayContaining([
+        PLANNED.audit.enrolled,
+        PLANNED.audit.confirmed,
+        PLANNED.audit.challengeFailure,
+        PLANNED.audit.challengeSuccess,
+      ]),
+    );
+    for (const e of mfaEvents) expect(e.organizationId ?? null).toBeNull();
+    const dump = JSON.stringify(audit.events);
+    for (const v of [secret, otpauthUri, ...recoveryCodes]) expect(dump).not.toContain(v);
+    await app.close();
+  });
+});
+
+describe('ADR-021 OQ-15 takeover (copied from #470)', () => {
+  it('MFA-TO-01 (sequential claim, dev/test wiring): a mailbox claim wipes the squatter factors and the flag', async () => {
+    const users = new InMemoryUserRepository();
+    const sessions = new InMemorySessionRepository();
+    const mfa = new InMemoryMfaRepository((id, at) => users.setMfaEnabledAt(id, at));
+    const now = new Date();
+    const id = randomUUID();
+    await users.create({
+      id,
+      email: 'squat@example.com',
+      name: 'Mallory',
+      passwordHash: 'squatter-hash',
+      emailVerifiedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    });
+    const fid = randomUUID();
+    await mfa.createPending({
+      id: fid,
+      userId: id,
+      type: 'totp',
+      status: 'pending',
+      secretEnc: 'v1.test.x',
+      secretKeyId: 'test',
+      lastUsedStep: null,
+      pendingExpiresAt: new Date(now.getTime() + 60_000),
+      confirmedAt: null,
+      lastUsedAt: null,
+      createdAt: now,
+    });
+    await mfa.activate({
+      userId: id,
+      factorId: fid,
+      step: 1,
+      at: now,
+      recoveryHashes: ['h1', 'h2'],
+    });
+    expect((await users.findById(id))?.mfaEnabledAt).toBeTruthy();
+    const claims = sequentialAccountClaims(users, sessions, mfa);
+    expect(await claims.claimForMailbox(id, now)).toBe(true);
+    expect(await mfa.listFactors(id)).toEqual([]);
+    expect(mfa.codes.filter((c) => c.userId === id)).toEqual([]);
+    expect((await users.findById(id))?.mfaEnabledAt ?? null).toBeNull();
+  });
+
+  it('MFA-TO-04 / MFA-REC-02: a password reset of a verified account keeps MFA', async () => {
+    const app = await buildApp();
+    await enrolledThenLoggedOut(app, 'to4@example.com');
+    const anon = new Client(app);
+    await anon.post('/auth/forgot-password', { email: 'to4@example.com' });
+    const mail = app.mail.sent.filter((m) => m.template === 'password_reset');
+    const token = new URL(mail.at(-1)!.data.url!).searchParams.get('token')!;
+    const newPassword = 'a-brand-new-password-1';
+    expect(
+      (await anon.post('/auth/reset-password', { token, password: newPassword })).statusCode,
+    ).toBe(204);
+    const login = await new Client(app).post('/auth/login', {
+      email: 'to4@example.com',
+      password: newPassword,
+    });
+    expect(login.json<{ mfaRequired?: boolean }>().mfaRequired).toBe(true);
+    await app.close();
+  });
+});
+
+describe('ADR-021 recovery codes (MFA-RC)', () => {
   it('MFA-RC-01/02: a recovery code works once and is single-use', async () => {
     const app = await buildApp();
     const c = await signupAndLogin(app, 'rc1@example.com');
@@ -650,8 +1001,12 @@ describe.skip('TODO(ADR-021) recovery codes (MFA-RC)', () => {
     const app = await buildApp();
     const c = await signupAndLogin(app, 'rc4@example.com');
     const { recoveryCodes: old, secret } = await enrollTotp(c);
+    const denied = await c.post(PLANNED.paths.recoveryCodes, {});
+    expect(denied.statusCode).toBe(403);
+    expect(errCode(denied)).toBe(PLANNED.errors.stepUpRequired);
     await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
     const regen = await c.post(PLANNED.paths.recoveryCodes, {});
+    expect(regen.headers['cache-control']).toMatch(/no-store/);
     expect(regen.statusCode).toBe(200);
     const fresh = regen.json<{ recoveryCodes: string[] }>().recoveryCodes;
     expect(fresh.some((x) => old.includes(x))).toBe(false);
@@ -673,26 +1028,29 @@ describe.skip('TODO(ADR-021) recovery codes (MFA-RC)', () => {
   });
 });
 
-describe.skip('TODO(ADR-021) step-up (MFA-SU)', () => {
-  it('MFA-SU-03: each step-up route returns 403 STEP_UP_REQUIRED on a password-level session of an MFA user', async () => {
+describe('ADR-021 step-up (MFA-SU)', () => {
+  it('MFA-SU-03: each step-up route returns 403 STEP_UP_REQUIRED on a session of an MFA user without a fresh step-up', async () => {
+    // Adapted to OQ-17: a password login of an MFA user no longer yields a session at all (MFA_REQUIRED, covered by
+    // MFA-TOTP-01). The session that lacks a step-up is the one right after confirm (elevated, never stamped).
     const app = await buildApp();
     const c = await signupAndLogin(app, 'su3@example.com');
     const org = (await c.post('/orgs', { name: 'SU' })).json<{ organization: { id: string } }>()
       .organization.id;
     await enrollTotp(c);
-    await c.post('/auth/logout');
-    const pw = new Client(app);
-    await pw.post('/auth/login', { email: 'su3@example.com', password: PASSWORD });
+    const pw = c;
     for (const r of STEP_UP_ROUTES) {
       const url = r.url
         .replace(':organizationId', org)
         .replace(':userId', '00000000-0000-4000-8000-000000000009')
         .replace(':integrationId', '00000000-0000-4000-8000-000000000008');
-      const res = await pw.send(
-        r.method,
-        url,
-        r.method === 'DELETE' ? undefined : { role: 'admin', provider: 'jira' },
-      );
+      // Adapted: a body valid for each route (Fastify validates the body before the handler checks the step-up).
+      const body =
+        r.method === 'DELETE'
+          ? undefined
+          : r.method === 'PATCH'
+            ? { role: 'member' }
+            : { provider: 'jira' };
+      const res = await pw.send(r.method, url, body);
       expect(res.statusCode, `${r.method} ${r.url}`).toBe(403);
       expect(errCode(res)).toBe(PLANNED.errors.stepUpRequired);
     }
@@ -728,25 +1086,137 @@ describe.skip('TODO(ADR-021) step-up (MFA-SU)', () => {
     });
     const c = await googleSignIn(app);
     expect(await sessionLevel(c)).not.toBe(PLANNED.levels.mfa);
+    // OQ-3: Google's amr is never a second factor; without a factor there is nothing to step up with.
+    const up = await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: '123456' });
+    expect(up.statusCode).toBe(403);
+    expect(await sessionLevel(c)).not.toBe(PLANNED.levels.mfa);
     await app.close();
   });
 
-  it.todo(
-    'MFA-SU-06: step-up older than the freshness window (OPEN QUESTION OQ-1) is required again',
-  );
-  it.todo('MFA-SU-07: org switch, role change and password reset drop auth_level back to password');
+  it('MFA-SU-06 (OQ-1): a step-up is fresh for 10 minutes, then required again', async () => {
+    let offset = 0;
+    const app = await buildApp({ clock: { now: () => new Date(Date.now() + offset) } });
+    const c = await signupAndLogin(app, 'su6@example.com');
+    const org = (await c.post('/orgs', { name: 'SU6' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    const { secret } = await enrollTotp(c);
+    const up = await c.post(PLANNED.paths.stepUp, {
+      [PLANNED.totpField]: totp(secret, Date.now()),
+    });
+    expect(up.statusCode).toBe(200);
+    const until = Date.parse(up.json<{ stepUpExpiresAt: string }>().stepUpExpiresAt);
+    expect(until - Date.now()).toBeGreaterThan(9 * 60_000);
+    expect(until - Date.now()).toBeLessThanOrEqual(10 * 60_000 + 1_000);
+    const target = `/orgs/${org}/members/00000000-0000-4000-8000-000000000009`;
+    expect(errCode(await c.patch(target, { role: 'member' }))).not.toBe(
+      PLANNED.errors.stepUpRequired,
+    );
+    offset = 10 * 60_000 + 1_000;
+    const late = await c.patch(target, { role: 'member' });
+    expect(late.statusCode).toBe(403);
+    expect(errCode(late)).toBe(PLANNED.errors.stepUpRequired);
+    await app.close();
+  });
+
+  it('MFA-SU-07 (interpretation): an org switch keeps level mfa but drops the step-up', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'su7@example.com');
+    const { secret } = await enrollTotp(c);
+    await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    // Creating an org rotates the session into it (org switch).
+    const org = (await c.post('/orgs', { name: 'SU7' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
+    const r = await c.patch(`/orgs/${org}/members/00000000-0000-4000-8000-000000000009`, {
+      role: 'member',
+    });
+    expect(errCode(r)).toBe(PLANNED.errors.stepUpRequired);
+    await app.close();
+  });
+
+  it('OQ-9 / OQ-10: the extra sensitive routes also need a fresh step-up', async () => {
+    const EXT = 'abcdefghijklmnopabcdefghijklmnop';
+    const app = await buildApp({ extensionIds: [EXT], desktopAuthEnabled: true });
+    const c = await signupAndLogin(app, 'oq910@example.com');
+    const org = (await c.post('/orgs', { name: 'OQ910' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    const other = new Client(app);
+    await other.post('/auth/login', { email: 'oq910@example.com', password: PASSWORD });
+    await enrollTotp(c);
+    // enrolment signed the other session out; any session id other than ours exercises the check.
+    const verifier = createHash('sha256').update(randomUUID()).digest('base64url');
+    const cases: [string, string, object | undefined][] = [
+      ['DELETE', `/orgs/${org}/members/00000000-0000-4000-8000-000000000009`, undefined],
+      ['POST', `/orgs/${org}/invitations`, { email: 'new-admin@example.com', role: 'admin' }],
+      ['POST', `/orgs/${org}/calendar/connect`, { provider: 'google', returnTo: '/calendar' }],
+      [
+        'DELETE',
+        `/orgs/${org}/calendar/connections/00000000-0000-4000-8000-000000000007`,
+        undefined,
+      ],
+      ['DELETE', '/auth/sessions/00000000-0000-4000-8000-000000000006', undefined],
+      [
+        'POST',
+        '/auth/extension/pair',
+        {
+          extensionId: EXT,
+          deviceId: randomUUID(),
+          nonce: createHash('sha256').update(randomUUID()).digest('base64url'),
+        },
+      ],
+      [
+        'POST',
+        '/auth/desktop/authorize',
+        {
+          codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
+          codeChallengeMethod: 'S256',
+          redirectUri: 'http://127.0.0.1:53682/callback',
+          deviceId: randomUUID(),
+        },
+      ],
+      ['POST', PLANNED.paths.recoveryCodes, undefined],
+    ];
+    for (const [method, url, body] of cases) {
+      const r = await c.send(method as 'POST' | 'DELETE', url, body);
+      expect(r.statusCode, `${method} ${url}`).toBe(403);
+      expect(errCode(r), `${method} ${url}`).toBe(PLANNED.errors.stepUpRequired);
+    }
+    // Not gated: inviting a member, leaving an org yourself, logging out.
+    const member = await c.post(`/orgs/${org}/invitations`, {
+      email: 'new-member@example.com',
+      role: 'member',
+    });
+    expect(member.statusCode).toBe(201);
+    await app.close();
+  });
+
+  it('users without MFA are not asked for a step-up (no factor to prove)', async () => {
+    const app = await buildApp();
+    const c = await signupAndLogin(app, 'nomfa@example.com');
+    const org = (await c.post('/orgs', { name: 'NoMFA' })).json<{ organization: { id: string } }>()
+      .organization.id;
+    const r = await c.post(`/orgs/${org}/invitations`, { email: 'adm@example.com', role: 'admin' });
+    expect(r.statusCode).toBe(201);
+    await app.close();
+  });
   it.todo(
     'MFA-SU-08: bearer clients (extension/desktop/mobile) get STEP_UP_REQUIRED on step-up routes, not a bypass',
   );
 });
 
-describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DIS)', () => {
-  it('MFA-DIS-01/03: disabling MFA needs step-up, revokes every other session and notifies by email', async () => {
+describe('ADR-021 session handling and disable (MFA-SES, MFA-DIS)', () => {
+  it('MFA-DIS-01: disabling MFA needs step-up and revokes every other session', async () => {
     const app = await buildApp();
     const c = await signupAndLogin(app, 'dis1@example.com');
-    const { factorId, secret } = await enrollTotp(c);
+    const { factorId, secret, recoveryCodes } = await enrollTotp(c);
     const other = new Client(app);
     await other.post('/auth/login', { email: 'dis1@example.com', password: PASSWORD });
+    // OQ-17: the second device needs the second factor too before it holds a session.
+    expect(
+      (await other.post(PLANNED.paths.challenge, { [PLANNED.recoveryField]: recoveryCodes[0] }))
+        .statusCode,
+    ).toBe(200);
+    expect((await other.get('/auth/session')).statusCode).toBe(200);
     const denied = await c.delete(PLANNED.paths.factor(factorId));
     expect(denied.statusCode).toBe(403);
     await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
@@ -754,6 +1224,24 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
     expect(ok.statusCode).toBe(204);
     expect((await other.get('/auth/session')).statusCode).toBe(401);
     expect((await c.get('/auth/session')).statusCode).toBe(200);
+    expect((await c.get(PLANNED.paths.status)).json<{ enabled: boolean }>().enabled).toBe(false);
+    // MFA is off: the next login is single-factor again.
+    await c.post('/auth/logout');
+    const again = new Client(app);
+    const login = await again.post('/auth/login', {
+      email: 'dis1@example.com',
+      password: PASSWORD,
+    });
+    expect(login.json<{ mfaRequired?: boolean }>().mfaRequired).toBeUndefined();
+    await app.close();
+  });
+
+  it('MFA-DIS-01: a foreign or unknown factor id is 404', async () => {
+    const app = await buildApp();
+    const a = await signupAndLogin(app, 'dis1a@example.com');
+    const b = await signupAndLogin(app, 'dis1b@example.com');
+    const { factorId } = await enrollTotp(a);
+    expect((await b.delete(PLANNED.paths.factor(factorId))).statusCode).toBe(404);
     await app.close();
   });
 
@@ -761,14 +1249,18 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
     const audit = new InMemoryAuditLog();
     const app = await buildApp({ audit });
     const c = await signupAndLogin(app, 'aud1@example.com');
-    const { secret, recoveryCodes } = await enrollTotp(c);
+    const { secret, recoveryCodes, factorId } = await enrollTotp(c);
     await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    await c.post(PLANNED.paths.recoveryCodes, {});
+    await c.delete(PLANNED.paths.factor(factorId));
     const actions = audit.events.map((e) => e.action as string);
     expect(actions).toEqual(
       expect.arrayContaining([
         PLANNED.audit.enrolled,
         PLANNED.audit.confirmed,
         PLANNED.audit.stepUp,
+        PLANNED.audit.recoveryRegenerated,
+        PLANNED.audit.disabled,
       ]),
     );
     const dump = JSON.stringify(audit.events);
@@ -777,9 +1269,20 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
     await app.close();
   });
 
-  it.todo(
-    'MFA-SES-04: elevation keeps the absolute expiry of the original sign-in (no lifetime extension)',
-  );
+  it('MFA-SES-04 (OQ-7): confirm and step-up keep the absolute expiry of the original sign-in', async () => {
+    const sessions = new InMemorySessionRepository();
+    const app = await buildApp({ sessions });
+    const c = await signupAndLogin(app, 'ses4@example.com');
+    const live = () => [...sessions.items.values()].filter((x) => !x.revokedAt);
+    const [first] = live();
+    const { secret } = await enrollTotp(c);
+    await c.post(PLANNED.paths.stepUp, { [PLANNED.totpField]: totp(secret, Date.now()) });
+    const now = live();
+    expect(now).toHaveLength(1);
+    expect(now[0]!.id).not.toBe(first!.id);
+    expect(now[0]!.expiresAt.getTime()).toBe(first!.expiresAt.getTime());
+    await app.close();
+  });
   it.todo(
     'MFA-SES-05: MFA reset by an admin/support revokes all sessions, extension and desktop token families, push devices',
   );
@@ -791,12 +1294,85 @@ describe.skip('TODO(ADR-021) session handling and disable/reset (MFA-SES, MFA-DI
   );
 });
 
+describe('ADR-021 storage, Google and auth-level cases (piece d)', () => {
+  it('MFA-SEC-01/02, MFA-RC-03: the secret is stored only encrypted and recovery codes only as keyed hashes', async () => {
+    const users = new InMemoryUserRepository();
+    const mfa = new InMemoryMfaRepository((id, at) => users.setMfaEnabledAt(id, at));
+    const app = await buildApp({ users, mfa });
+    const c = await signupAndLogin(app, 'store@example.com');
+    const { factorId, secret, recoveryCodes } = await enrollTotp(c);
+    const [factor] = await mfa.listFactors((await users.findByEmail('store@example.com'))!.id);
+    expect(factor?.id).toBe(factorId);
+    expect(factor?.secretEnc).toBeTruthy();
+    expect(factor?.secretEnc).not.toContain(secret);
+    expect(factor?.secretEnc).not.toContain(base32Decode(secret).toString('base64'));
+    const stored = mfa.codes.filter((r) => r.factorId === factorId);
+    expect(stored).toHaveLength(recoveryCodes.length);
+    for (const row of stored) expect(row.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    const dump = JSON.stringify({ factors: [...mfa.factors.values()], codes: mfa.codes });
+    for (const code of recoveryCodes) {
+      expect(dump).not.toContain(code);
+      expect(dump).not.toContain(code.replace(/[-\s]/g, '').toUpperCase());
+    }
+    await app.close();
+  });
+
+  it('MFA-OIDC-03/04: a Google sign-in of an MFA user is only a challenge; Google never elevates (OQ-3, OQ-17)', async () => {
+    const app = await buildApp({
+      users: new InMemoryUserRepository(),
+      googleOAuth: {
+        config: GOOGLE_CONFIG,
+        client: fakeGoogle({
+          sub: '100000000000000000077',
+          email: 'g-mfa@gmail.com',
+          emailVerified: true,
+          name: 'G Mfa',
+        }),
+      },
+    });
+    const first = await googleSignIn(app);
+    const { secret } = await enrollTotp(first);
+    expect((await first.post('/auth/logout')).statusCode).toBe(204);
+
+    const start = await app.inject({ method: 'GET', url: '/auth/google/start' });
+    const state = new URL(String(start.headers.location)).searchParams.get('state') ?? '';
+    const oauth = start.cookies.find((k) => k.name.endsWith('meetops_oauth'))!;
+    const q = new URLSearchParams({ code: 'good-code', state, scope: 'openid email profile' });
+    const c = new Client(app);
+    c.absorb(
+      await app.inject({
+        method: 'GET',
+        url: `/auth/google/callback?${q.toString()}`,
+        headers: { cookie: `${oauth.name}=${oauth.value}` },
+      }),
+    );
+    expect(sidOf(c)).toBeUndefined();
+    expect(c.jar.get(MFA_COOKIE)).toBeTruthy();
+    const pending = await c.get('/orgs');
+    expect(pending.statusCode).toBe(403);
+    expect(errCode(pending)).toBe('MFA_REQUIRED');
+    const ok = await c.post(PLANNED.paths.challenge, {
+      [PLANNED.totpField]: totp(secret, Date.now()),
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(sidOf(c)).toBeTruthy();
+    expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
+    await app.close();
+  });
+
+  it('MFA-SU-09: only exactly "mfa" counts as elevated; unknown stored levels read back as password', () => {
+    const now = new Date();
+    for (const raw of ['MFA', 'mfa ', 'totp', 'webauthn', 'aal2', '', null, undefined])
+      expect(toSessionAuthLevel(raw)).toBe('password');
+    expect(toSessionAuthLevel('mfa')).toBe('mfa');
+    for (const level of ['password', 'google'] as const)
+      expect(hasFreshStepUp({ authLevel: level, mfaAt: now }, now)).toBe(false);
+    expect(hasFreshStepUp({ authLevel: 'mfa', mfaAt: now }, now)).toBe(true);
+  });
+});
+
 describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
-  // Enrollment / secret storage
-  it.todo(
-    'MFA-SEC-01: TOTP secret stored only as a TokenCipher envelope bound to user+factor (P-3: tokenAad needs a user context)',
-  );
-  it.todo('MFA-SEC-02: recovery codes stored only as slow/keyed hashes; DB dump has no plaintext');
+  // Enrollment / secret storage: MFA-SEC-01/02 and MFA-RC-03 are active (ADR-021 piece d block above).
   it.todo('MFA-TOTP-07: code compare is constant-time (timingSafeEqual over fixed-length buffers)');
   // WebAuthn (ADR-021 Decision 1: passkeys)
   it.todo(
@@ -811,14 +1387,8 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
     'MFA-WA-05: a credential id registered by user A cannot be used to authenticate as user B',
   );
   // OIDC
-  // MFA-OIDC-02 (N-4) is active now: see MFA-OIDC-01/02 in the baseline block.
-  it.todo(
-    'MFA-OIDC-03: an owner/admin who signs in with Google still has to pass the MFA challenge',
-  );
-  it.todo('MFA-OIDC-04: amr/acr from Google are not trusted to elevate to mfa (OQ-3)');
-  it.todo(
-    'MFA-OIDC-05 (N-1): a pre-hijacked account cannot keep an attacker-enrolled factor after Google proves the email',
-  );
+  // MFA-OIDC-02 (N-4) is active now: see MFA-OIDC-01/02 in the baseline block. MFA-OIDC-03/04: piece d block above.
+  // MFA-OIDC-05 (N-1) is covered by MFA-TO-02 (live Postgres, test/mfa.prisma.integration.test.ts).
   // Clients
   it.todo(
     'MFA-CLI-01: desktop authorize (ADR-012) of an MFA-required user only completes after the browser MFA step',
@@ -843,22 +1413,17 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
   it.todo(
     'MFA-REC-01: losing all factors goes through the documented recovery path only (OQ-12); no email-only reset of MFA',
   );
-  it.todo('MFA-REC-02: password reset does not disable MFA');
   it.todo(
     'MFA-REC-03: admin MFA reset of another member needs step-up, is audited and emails the member',
   );
   // Remaining plan cases (see mfa-test-plan.md for the expected behaviour)
-  it.todo(
-    'MFA-ENR-08: enrollment needs a verified email and a fresh session (N-1 pre-hijack defence)',
-  );
   it.todo('MFA-ENR-09: an owner/admin without MFA can only reach the enrollment flow (OQ-5)');
-  it.todo('MFA-TOTP-08: password and MFA failures share one account lockout budget (OQ-4)');
-  it.todo('MFA-RC-03: recovery codes are stored hashed and compared in constant time (OQ-6)');
   it.todo('MFA-RC-06: using a recovery code is audited and emails the user');
-  it.todo('MFA-RC-07: recovery-code attempts share the MFA rate limits and lockout');
+  it.todo(
+    'MFA-DIS-03: disabling MFA emails the user (needs a notifications mail kind; follow-up to piece c)',
+  );
   it.todo('MFA-WA-06: only allowed COSE algorithms; attestation per OQ-8; no private key stored');
   it.todo('MFA-WA-07: passkey as first factor or second factor only, per OQ-8');
-  it.todo('MFA-SU-09: any auth_level other than exactly "mfa" is treated as not elevated');
   it.todo('MFA-DIS-02: owners/admins (and enforcing-org members) cannot remove their last factor');
   it.todo('MFA-OIDC-06 (M-2): linking Google onto an account with MFA needs that account MFA');
   it.todo(
@@ -869,11 +1434,4 @@ describe('TODO(ADR-021) cases not automatable yet (it.todo)', () => {
   it.todo(
     'MFA-ERR-03: admins see MFA on/off for members, never factor detail or recovery-code counts',
   );
-  // CSRF / enumeration
-  it.todo('MFA-CSRF-02: every MFA POST/DELETE rejects missing/wrong CSRF and bad Origin');
-  it.todo('MFA-CSRF-03: enrollment/QR pages send Cache-Control: no-store and frame-ancestors none');
-  it.todo(
-    'MFA-ERR-01: login response for MFA vs non-MFA users is identical until the password is correct',
-  );
-  it.todo('MFA-ERR-02: wrong TOTP and wrong recovery code give the same generic error and timing');
 });

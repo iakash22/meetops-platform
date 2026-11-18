@@ -80,4 +80,12 @@ export class InMemoryUserRepository implements UserRepository {
     const u = this.byId.get(id);
     if (u) u.passwordHash = passwordHash;
   }
+  /**
+   * ADR-021 (test/dev): mirror of `users.mfa_enabled_at`. The Prisma MFA repository writes the column in the same
+   * transaction as the factor; the in-memory MFA repository calls this.
+   */
+  setMfaEnabledAt(id: UserId, at: Date | null) {
+    const u = this.byId.get(id);
+    if (u) u.mfaEnabledAt = at;
+  }
 }

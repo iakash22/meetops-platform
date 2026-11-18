@@ -180,8 +180,10 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       },
     },
     async (request, reply) => {
-      const { user } = await g.requireSession(request);
-      const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
+      const session = await g.requireSession(request);
+      // ADR-021 OQ-9: inviting an admin needs a fresh step-up (owners cannot be invited, InvitableRole).
+      if (request.body.role === 'admin') auth.requireStepUp(session);
+      const ctx = await orgs.resolveTenant(request.params.organizationId, session.user.id);
       const r = await orgs.invite(ctx, request.body);
       return reply.status(201).send(invDto(r.invitation));
     },
@@ -276,7 +278,10 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       },
     },
     async (request, reply) => {
-      const { user } = await g.requireSession(request);
+      const session = await g.requireSession(request);
+      // ADR-021 Decision 4: role changes need a fresh step-up.
+      auth.requireStepUp(session);
+      const { user } = session;
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
       const m = await orgs.changeRole(ctx, request.params.userId, request.body.role);
       if (request.params.userId === user.id)
@@ -298,7 +303,10 @@ export async function organizationRoutes(app: FastifyInstance, opts: Organizatio
       },
     },
     async (request, reply) => {
-      const { user } = await g.requireSession(request);
+      const session = await g.requireSession(request);
+      const { user } = session;
+      // ADR-021 OQ-9: removing someone else needs a fresh step-up; leaving an org yourself does not.
+      if (request.params.userId !== user.id) auth.requireStepUp(session);
       const ctx = await orgs.resolveTenant(request.params.organizationId, user.id);
       await orgs.removeMember(ctx, request.params.userId);
       if (request.params.userId === user.id)

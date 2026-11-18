@@ -25,7 +25,39 @@ export const API_ERROR_CODES = [
   'RATE_LIMITED',
   'PROVIDER_UNAVAILABLE',
   'INTERNAL',
+  // Unreleased (ADR-021 MFA)
+  'MFA_REQUIRED',
+  'STEP_UP_REQUIRED',
+  'INVALID_MFA_CODE',
 ] as const;
+/**
+ * Unreleased (ADR-021): MFA routes. All are cookie-session routes; mutations need `x-csrf-token`.
+ * - `status`: GET, the caller's factors (never secrets).
+ * - `enroll`: POST, starts a pending TOTP factor and returns the otpauth URI **once** (`Cache-Control: no-store`).
+ * - `confirm`: POST, activates the pending factor with a TOTP code and returns the recovery codes **once**.
+ * - `challenge`: POST, completes login for an MFA user (session goes `password` to `mfa`).
+ * - `stepUp`: POST, refreshes step-up freshness on an `mfa` session (MFA_STEP_UP_WINDOW_SECONDS).
+ * - `recoveryCodes`: POST, regenerates recovery codes (needs step-up).
+ * - `factor`: DELETE, disables a factor (needs step-up).
+ */
+export const MFA_PATHS = {
+  status: '/auth/mfa',
+  enroll: '/auth/mfa/totp/enroll',
+  confirm: '/auth/mfa/totp/confirm',
+  challenge: '/auth/mfa/challenge',
+  stepUp: '/auth/mfa/step-up',
+  recoveryCodes: '/auth/mfa/recovery-codes',
+  factor: '/auth/mfa/factors/:factorId',
+} as const;
+/** Session assurance levels (`AuthSession.session.authLevel`). `mfa` only after a TOTP or recovery-code check. */
+export const SESSION_AUTH_LEVELS = ['password', 'google', 'mfa'] as const;
+/** ADR-021 OQ-1 default: a step-up stays fresh for 10 minutes. */
+export const MFA_STEP_UP_WINDOW_SECONDS = 600;
+/** TOTP (RFC 6238) parameters: SHA-1, 6 digits, 30 s period. */
+export const MFA_TOTP_DIGITS = 6;
+export const MFA_TOTP_PERIOD_SECONDS = 30;
+/** Recovery codes: MFA_RECOVERY_CODE_COUNT codes of 10 base32 chars shown as `xxxxx-xxxxx`. */
+export const MFA_RECOVERY_CODE_COUNT = 10;
 /** Cursor pagination (v0.3.3): max page size, i.e. the `limit` maximum of CursorPageQuery and OffsetPageQuery. */
 export const MAX_PAGE_LIMIT = 100;
 /** Default `limit` when the query omits it. */
@@ -269,6 +301,12 @@ export const REDACT_KEYS = [
   'GITHUB_APP_CLIENT_SECRET',
   'JIRA_CLIENT_SECRET',
   'GITHUB_APP_WEBHOOK_SECRET',
+  // Unreleased (ADR-021 MFA): request/response fields of MFA_PATHS (@meetops/logger already covers them).
+  'totpCode',
+  'recoveryCode',
+  'recoveryCodes',
+  'otpauthUri',
+  'secret',
 ] as const;
 
 /**

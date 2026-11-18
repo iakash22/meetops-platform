@@ -156,111 +156,111 @@ Routes from contracts `api/recording-sessions.ts` (init, chunks, complete, abort
 
 ## 5. MFA and step-up (ADR-021)
 
-Planned. MFA is not built yet. The full steps, expected results, sources, priorities (P0/P1/P2), layers and threat-model links are in [`mfa-test-plan.md`](./mfa-test-plan.md); the open questions OQ-1 to OQ-17 are in its §14. The executable suite is `apps/api/test/mfa.security.test.ts`. "Active" cases run and pass on the current code at `6feef782`. "Pending" cases are flagged `TODO(ADR-021)` and are switched on when MFA lands (plan §13). MFA-SEC-05/06 findings are fixed; those tests should be un-skipped.
+TOTP MFA is built on the ADR-021 series (`feat/mfa-totp-core`, `feat/mfa-enrol-verify`, `feat/mfa-step-up`, `feat/mfa-security-suite`), following the decided §14 defaults recorded in ADR-021 Amendment 1. The full steps, expected results, sources, priorities (P0/P1/P2), layers and threat-model links are in [`mfa-test-plan.md`](./mfa-test-plan.md). The executable suites are `apps/api/test/mfa.security.test.ts`, `mfa-core.test.ts`, `mfa-challenge.test.ts` and the live-Postgres `mfa.prisma.integration.test.ts` (runs only with `TEST_DATABASE_URL`). "Active" cases run and pass; "Pending (`it.todo`)" cases cover parts that are not built yet: WebAuthn, OQ-5 forced enrolment and the org policy (MFA-TEN), admin/support reset (OQ-12), the MFA email notifications and the client-specific flows.
 
-| ID          | Case                                         | Severity | Status                                         |
-| ----------- | -------------------------------------------- | -------- | ---------------------------------------------- |
-| MFA-ENR-01  | Secret generation                            | High     | Pending (skipped test)                         |
-| MFA-ENR-02  | otpauth URI / QR                             | Medium   | Pending (skipped test)                         |
-| MFA-ENR-03  | Uniqueness                                   | High     | Pending (skipped test)                         |
-| MFA-ENR-04  | Pending factor is inactive                   | Medium   | Pending (skipped test)                         |
-| MFA-ENR-05  | Confirm with a valid code before activation  | High     | Pending (skipped test)                         |
-| MFA-ENR-06  | Re-enroll / replace                          | High     | Pending (skipped test)                         |
-| MFA-ENR-07  | Factor ownership                             | High     | Pending (skipped test)                         |
-| MFA-ENR-08  | Enrollment needs a fresh, verified session   | High     | Pending (`it.todo`)                            |
-| MFA-ENR-09  | Owner/admin forced enrollment                | High     | Pending (`it.todo`)                            |
-| MFA-TOTP-01 | Login of an MFA user is two-step             | Critical | Pending (skipped test)                         |
-| MFA-TOTP-02 | Valid code elevates and rotates              | High     | Pending (skipped test)                         |
-| MFA-TOTP-03 | Window / clock skew                          | Medium   | Pending (skipped test)                         |
-| MFA-TOTP-04 | Replay of a used code                        | High     | Pending (skipped test)                         |
-| MFA-TOTP-05 | Brute force / rate limit / lockout           | Critical | Pending (skipped test)                         |
-| MFA-TOTP-06 | Input validation                             | Medium   | Pending (skipped test)                         |
-| MFA-TOTP-07 | Timing-safe compare                          | Medium   | Pending (`it.todo`)                            |
-| MFA-TOTP-08 | Shared lockout budget                        | High     | Pending (`it.todo`)                            |
-| MFA-RC-01   | Generation                                   | High     | Pending (skipped test)                         |
-| MFA-RC-02   | Single use                                   | High     | Pending (skipped test)                         |
-| MFA-RC-03   | Hashed at rest                               | High     | Pending (`it.todo`)                            |
-| MFA-RC-04   | Regenerate invalidates old                   | High     | Pending (skipped test)                         |
-| MFA-RC-05   | Never re-displayed                           | Medium   | Pending (skipped test)                         |
-| MFA-RC-06   | Use is audited and notified                  | Medium   | Pending (`it.todo`)                            |
-| MFA-RC-07   | Rate limited                                 | High     | Pending (`it.todo`)                            |
-| MFA-WA-01   | Origin / rpId                                | Critical | Pending (`it.todo`)                            |
-| MFA-WA-02   | Challenge                                    | High     | Pending (`it.todo`)                            |
-| MFA-WA-03   | Sign count                                   | Medium   | Pending (`it.todo`)                            |
-| MFA-WA-04   | User verification                            | Medium   | Pending (`it.todo`)                            |
-| MFA-WA-05   | Credential ownership                         | High     | Pending (`it.todo`)                            |
-| MFA-WA-06   | Attestation / algorithms                     | Low      | Pending (`it.todo`)                            |
-| MFA-WA-07   | Passkey as first factor?                     | Medium   | Pending (`it.todo`)                            |
-| MFA-SU-01   | Sensitive routes exist (inventory)           | Info     | Active                                         |
-| MFA-SU-02   | Unbuilt sensitive routes (pin)               | Medium   | Active                                         |
-| MFA-SU-03   | Enforcement                                  | Critical | Pending (skipped test)                         |
-| MFA-SU-04   | Elevation rotates                            | High     | Pending (skipped test)                         |
-| MFA-SU-05   | Google sessions                              | High     | Pending (skipped test)                         |
-| MFA-SU-06   | Freshness / max age                          | Medium   | Pending (`it.todo`)                            |
-| MFA-SU-07   | Downgrade on sensitive change                | High     | Pending (`it.todo`)                            |
-| MFA-SU-08   | Bearer clients                               | High     | Pending (`it.todo`)                            |
-| MFA-SU-09   | Unknown auth_level values                    | Medium   | Pending (`it.todo`)                            |
-| MFA-SES-01  | `auth_level` column and default              | Info     | Active                                         |
-| MFA-SES-02  | Nothing elevates today                       | Info     | Active                                         |
-| MFA-SES-03  | Password login not elevated                  | High     | Active                                         |
-| MFA-SES-04  | Elevation keeps the absolute expiry          | Medium   | Pending (`it.todo`)                            |
-| MFA-SES-05  | Reset / disable revokes everything else      | High     | Pending (`it.todo`)                            |
-| MFA-SES-06  | Refresh-token families                       | High     | Pending (`it.todo`)                            |
-| MFA-SES-07  | Realtime                                     | Medium   | Pending (`it.todo`)                            |
-| MFA-DIS-01  | Disable needs step-up                        | Critical | Pending (skipped test)                         |
-| MFA-DIS-02  | Required roles can't drop below one factor   | High     | Pending (`it.todo`)                            |
-| MFA-DIS-03  | Notification                                 | High     | Pending (skipped test)                         |
-| MFA-OIDC-01 | Google session not elevated                  | High     | Active                                         |
-| MFA-OIDC-02 | Distinct auth_level for Google (**N-4**)     | Low      | Active                                         |
-| MFA-OIDC-03 | Owners/admins via Google still do MFA        | Critical | Pending (`it.todo`)                            |
-| MFA-OIDC-04 | `amr`/`acr` not trusted                      | High     | Pending (`it.todo`)                            |
-| MFA-OIDC-05 | Pre-hijack (**N-1**) x MFA                   | High     | Pending (`it.todo`)                            |
-| MFA-OIDC-06 | Linking is sensitive                         | High     | Pending (`it.todo`)                            |
-| MFA-CLI-01  | Desktop (ADR-012)                            | High     | Pending (`it.todo`)                            |
-| MFA-CLI-02  | Extension pairing (ADR-005)                  | High     | Pending (`it.todo`)                            |
-| MFA-CLI-03  | Mobile                                       | High     | Pending (`it.todo`)                            |
-| MFA-AUD-01  | Events                                       | Medium   | Pending (skipped test)                         |
-| MFA-AUD-02  | No secrets in audit                          | High     | Pending (skipped test)                         |
-| MFA-AUD-03  | Tenancy of events                            | Low      | Pending (`it.todo`)                            |
-| MFA-TEN-01  | Owner/admin without MFA                      | Critical | Pending (`it.todo`)                            |
-| MFA-TEN-02  | Org "require for everyone"                   | High     | Pending (`it.todo`)                            |
-| MFA-TEN-03  | Org switch into an enforcing org             | High     | Pending (`it.todo`)                            |
-| MFA-TEN-04  | Policy change                                | High     | Pending (`it.todo`)                            |
-| MFA-TEN-05  | Promotion to admin                           | Medium   | Pending (`it.todo`)                            |
-| MFA-REC-01  | All factors lost                             | Critical | Pending (`it.todo`)                            |
-| MFA-REC-02  | Password reset keeps MFA                     | Critical | Pending (`it.todo`)                            |
-| MFA-REC-03  | Admin/support reset of another member        | High     | Pending (`it.todo`)                            |
-| MFA-REC-04  | Social engineering                           | High     | Pending (`it.todo`)                            |
-| MFA-SEC-01  | TOTP secret encrypted at rest                | High     | Pending (`it.todo`)                            |
-| MFA-SEC-02  | Recovery codes hashed                        | High     | Pending (`it.todo`)                            |
-| MFA-SEC-03  | `secret` key redacted                        | High     | Active                                         |
-| MFA-SEC-04  | otpauth URI in a logged URL                  | High     | Active                                         |
-| MFA-SEC-05  | A 6-digit `code` is redacted (**P-1 fixed**) | Medium   | Ready to un-skip (finding fixed at `6feef782`) |
-| MFA-SEC-06  | MFA field names redacted (**P-4 fixed**)     | Medium   | Ready to un-skip (finding fixed at `6feef782`) |
-| MFA-SEC-07  | Never in errors, metrics or traces           | Medium   | Pending (`it.todo`)                            |
-| MFA-CSRF-01 | Step-up routes refuse missing CSRF today     | High     | Active                                         |
-| MFA-CSRF-02 | Every MFA POST/DELETE                        | High     | Pending (`it.todo`)                            |
-| MFA-CSRF-03 | Enrollment response                          | Medium   | Pending (`it.todo`)                            |
-| MFA-ERR-01  | Enrollment state not leaked before password  | Medium   | Pending (`it.todo`)                            |
-| MFA-ERR-02  | Generic MFA failure                          | Medium   | Pending (`it.todo`)                            |
-| MFA-ERR-03  | Org admins see status, not detail            | Low      | Pending (`it.todo`)                            |
-| MFA-TO-01   | Mailbox claim clears attacker factors        | Critical | Pending (new)                                  |
-| MFA-TO-02   | Google claim clears attacker factors         | Critical | Pending (new)                                  |
-| MFA-TO-03   | Factor deletion is in the claim transaction  | High     | Pending (new)                                  |
-| MFA-TO-04   | Verified-account password reset keeps MFA    | Critical | Pending (new)                                  |
-| MFA-MIG-01  | Factor tables store no plaintext secrets     | High     | Pending (new)                                  |
-| MFA-MIG-02  | Org policy storage and RLS                   | High     | Pending (new)                                  |
-| MFA-MIG-03  | `auth_level='mfa'` is a first-class value    | High     | Pending (new)                                  |
-| MFA-MIG-04  | Backfill / existing owners and admins        | High     | Pending (new)                                  |
-| MFA-MIG-05  | Compatibility and rollback                   | Medium   | Pending (new)                                  |
-| MFA-E2E-01  | Member optional enroll, logout, TOTP login   | Critical | Pending (new)                                  |
-| MFA-E2E-02  | Owner forced enrollment                      | Critical | Pending (new)                                  |
-| MFA-E2E-03  | Recovery code, single use                    | High     | Pending (new)                                  |
-| MFA-E2E-04  | Step-up on a role change                     | Critical | Pending (new)                                  |
-| MFA-E2E-05  | Disable MFA (optional role)                  | High     | Pending (new)                                  |
-| MFA-E2E-06  | Google + MFA                                 | Critical | Pending (new)                                  |
-| MFA-E2E-07  | Password reset then MFA                      | Critical | Pending (new)                                  |
-| MFA-E2E-08  | WebAuthn happy path                          | High     | Pending (new)                                  |
+| ID          | Case                                         | Severity | Status                                                                                       |
+| ----------- | -------------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| MFA-ENR-01  | Secret generation                            | High     | Active (`mfa.security`)                                                                      |
+| MFA-ENR-02  | otpauth URI / QR                             | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-ENR-03  | Uniqueness                                   | High     | Active (`mfa.security`)                                                                      |
+| MFA-ENR-04  | Pending factor is inactive                   | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-ENR-05  | Confirm with a valid code before activation  | High     | Active (`mfa.security`)                                                                      |
+| MFA-ENR-06  | Re-enroll / replace                          | High     | Active (`mfa.security`)                                                                      |
+| MFA-ENR-07  | Factor ownership                             | High     | Active (`mfa.security`)                                                                      |
+| MFA-ENR-08  | Enrollment needs a fresh, verified session   | High     | Active (`mfa.security`)                                                                      |
+| MFA-ENR-09  | Owner/admin forced enrollment                | High     | Pending (`it.todo`)                                                                          |
+| MFA-TOTP-01 | Login of an MFA user is two-step             | Critical | Active (`mfa.security`)                                                                      |
+| MFA-TOTP-02 | Valid code elevates and rotates              | High     | Active (`mfa.security`)                                                                      |
+| MFA-TOTP-03 | Window / clock skew                          | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-TOTP-04 | Replay of a used code                        | High     | Active (`mfa.security`)                                                                      |
+| MFA-TOTP-05 | Brute force / rate limit / lockout           | Critical | Active (`mfa.security`)                                                                      |
+| MFA-TOTP-06 | Input validation                             | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-TOTP-07 | Timing-safe compare                          | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-TOTP-08 | Shared lockout budget                        | High     | Active (`mfa.security`)                                                                      |
+| MFA-RC-01   | Generation                                   | High     | Active (`mfa.security`)                                                                      |
+| MFA-RC-02   | Single use                                   | High     | Active (`mfa.security`)                                                                      |
+| MFA-RC-03   | Hashed at rest                               | High     | Active (`mfa.security`)                                                                      |
+| MFA-RC-04   | Regenerate invalidates old                   | High     | Active (`mfa.security`)                                                                      |
+| MFA-RC-05   | Never re-displayed                           | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-RC-06   | Use is audited and notified                  | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-RC-07   | Rate limited                                 | High     | Active (`mfa.security`)                                                                      |
+| MFA-WA-01   | Origin / rpId                                | Critical | Pending (`it.todo`)                                                                          |
+| MFA-WA-02   | Challenge                                    | High     | Pending (`it.todo`)                                                                          |
+| MFA-WA-03   | Sign count                                   | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-WA-04   | User verification                            | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-WA-05   | Credential ownership                         | High     | Pending (`it.todo`)                                                                          |
+| MFA-WA-06   | Attestation / algorithms                     | Low      | Pending (`it.todo`)                                                                          |
+| MFA-WA-07   | Passkey as first factor?                     | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-SU-01   | Sensitive routes exist (inventory)           | Info     | Active (`mfa.security`)                                                                      |
+| MFA-SU-02   | Unbuilt sensitive routes (pin)               | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-SU-03   | Enforcement                                  | Critical | Active (`mfa.security`)                                                                      |
+| MFA-SU-04   | Elevation rotates                            | High     | Active (`mfa.security`)                                                                      |
+| MFA-SU-05   | Google sessions                              | High     | Active (`mfa.security`)                                                                      |
+| MFA-SU-06   | Freshness / max age                          | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-SU-07   | Downgrade on sensitive change                | High     | Active (`mfa.security`)                                                                      |
+| MFA-SU-08   | Bearer clients                               | High     | Pending (`it.todo`)                                                                          |
+| MFA-SU-09   | Unknown auth_level values                    | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-SES-01  | `auth_level` column and default              | Info     | Active (`mfa.security`)                                                                      |
+| MFA-SES-02  | Nothing elevates today                       | Info     | Active (`mfa.security`)                                                                      |
+| MFA-SES-03  | Password login not elevated                  | High     | Active (`mfa.security`)                                                                      |
+| MFA-SES-04  | Elevation keeps the absolute expiry          | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-SES-05  | Reset / disable revokes everything else      | High     | Pending (`it.todo`)                                                                          |
+| MFA-SES-06  | Refresh-token families                       | High     | Pending (`it.todo`)                                                                          |
+| MFA-SES-07  | Realtime                                     | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-DIS-01  | Disable needs step-up                        | Critical | Active (`mfa.security`)                                                                      |
+| MFA-DIS-02  | Required roles can't drop below one factor   | High     | Pending (`it.todo`)                                                                          |
+| MFA-DIS-03  | Notification                                 | High     | Pending (`it.todo`)                                                                          |
+| MFA-OIDC-01 | Google session not elevated                  | High     | Active (`mfa.security`)                                                                      |
+| MFA-OIDC-02 | Distinct auth_level for Google (**N-4**)     | Low      | Active (`mfa.security`)                                                                      |
+| MFA-OIDC-03 | Owners/admins via Google still do MFA        | Critical | Active (`mfa.security`)                                                                      |
+| MFA-OIDC-04 | `amr`/`acr` not trusted                      | High     | Active (`mfa.security`)                                                                      |
+| MFA-OIDC-05 | Pre-hijack (**N-1**) x MFA                   | High     | Active (via MFA-TO-02, `mfa.prisma.integration`)                                             |
+| MFA-OIDC-06 | Linking is sensitive                         | High     | Pending (`it.todo`)                                                                          |
+| MFA-CLI-01  | Desktop (ADR-012)                            | High     | Pending (`it.todo`)                                                                          |
+| MFA-CLI-02  | Extension pairing (ADR-005)                  | High     | Pending (`it.todo`)                                                                          |
+| MFA-CLI-03  | Mobile                                       | High     | Pending (`it.todo`)                                                                          |
+| MFA-AUD-01  | Events                                       | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-AUD-02  | No secrets in audit                          | High     | Active (`mfa.security`)                                                                      |
+| MFA-AUD-03  | Tenancy of events                            | Low      | Pending (`it.todo`)                                                                          |
+| MFA-TEN-01  | Owner/admin without MFA                      | Critical | Pending (`it.todo`)                                                                          |
+| MFA-TEN-02  | Org "require for everyone"                   | High     | Pending (`it.todo`)                                                                          |
+| MFA-TEN-03  | Org switch into an enforcing org             | High     | Pending (`it.todo`)                                                                          |
+| MFA-TEN-04  | Policy change                                | High     | Pending (`it.todo`)                                                                          |
+| MFA-TEN-05  | Promotion to admin                           | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-REC-01  | All factors lost                             | Critical | Pending (`it.todo`)                                                                          |
+| MFA-REC-02  | Password reset keeps MFA                     | Critical | Active (`mfa.security`)                                                                      |
+| MFA-REC-03  | Admin/support reset of another member        | High     | Pending (`it.todo`)                                                                          |
+| MFA-REC-04  | Social engineering                           | High     | Pending (`it.todo`)                                                                          |
+| MFA-SEC-01  | TOTP secret encrypted at rest                | High     | Active (`mfa.security`)                                                                      |
+| MFA-SEC-02  | Recovery codes hashed                        | High     | Active (`mfa.security`)                                                                      |
+| MFA-SEC-03  | `secret` key redacted                        | High     | Active (`mfa.security`)                                                                      |
+| MFA-SEC-04  | otpauth URI in a logged URL                  | High     | Active (`mfa.security`)                                                                      |
+| MFA-SEC-05  | A 6-digit `code` is redacted (**P-1 fixed**) | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-SEC-06  | MFA field names redacted (**P-4 fixed**)     | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-SEC-07  | Never in errors, metrics or traces           | Medium   | Pending (`it.todo`)                                                                          |
+| MFA-CSRF-01 | Step-up routes refuse missing CSRF today     | High     | Active (`mfa.security`)                                                                      |
+| MFA-CSRF-02 | Every MFA POST/DELETE                        | High     | Active (`mfa.security`)                                                                      |
+| MFA-CSRF-03 | Enrollment response                          | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-ERR-01  | Enrollment state not leaked before password  | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-ERR-02  | Generic MFA failure                          | Medium   | Active (`mfa.security`)                                                                      |
+| MFA-ERR-03  | Org admins see status, not detail            | Low      | Pending (`it.todo`)                                                                          |
+| MFA-TO-01   | Mailbox claim clears attacker factors        | Critical | Active (`mfa.prisma.integration`, `mfa.security`)                                            |
+| MFA-TO-02   | Google claim clears attacker factors         | Critical | Active (`mfa.prisma.integration`)                                                            |
+| MFA-TO-03   | Factor deletion is in the claim transaction  | High     | Active (`mfa.prisma.integration`)                                                            |
+| MFA-TO-04   | Verified-account password reset keeps MFA    | Critical | Active (`mfa.security`)                                                                      |
+| MFA-MIG-01  | Factor tables store no plaintext secrets     | High     | Partly active (MFA-SEC-01/02 in `mfa.security`; live forced RLS in `mfa.prisma.integration`) |
+| MFA-MIG-02  | Org policy storage and RLS                   | High     | Partly (column added; `organizations` has no RLS today, see ADR-021 Amendment 1)             |
+| MFA-MIG-03  | `auth_level='mfa'` is a first-class value    | High     | Active (MFA-SU-09 in `mfa.security`, `mfa-core`)                                             |
+| MFA-MIG-04  | Backfill / existing owners and admins        | High     | Pending (OQ-5 forced enrolment not built)                                                    |
+| MFA-MIG-05  | Compatibility and rollback                   | Medium   | Pending (manual rollback rehearsal)                                                          |
+| MFA-E2E-01  | Member optional enroll, logout, TOTP login   | Critical | Pending (new)                                                                                |
+| MFA-E2E-02  | Owner forced enrollment                      | Critical | Pending (new)                                                                                |
+| MFA-E2E-03  | Recovery code, single use                    | High     | Pending (new)                                                                                |
+| MFA-E2E-04  | Step-up on a role change                     | Critical | Pending (new)                                                                                |
+| MFA-E2E-05  | Disable MFA (optional role)                  | High     | Pending (new)                                                                                |
+| MFA-E2E-06  | Google + MFA                                 | Critical | Pending (new)                                                                                |
+| MFA-E2E-07  | Password reset then MFA                      | Critical | Pending (new)                                                                                |
+| MFA-E2E-08  | WebAuthn happy path                          | High     | Pending (new)                                                                                |
 
 ## 6. Counts
 

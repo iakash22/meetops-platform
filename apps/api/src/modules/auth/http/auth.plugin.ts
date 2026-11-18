@@ -2,6 +2,7 @@ import type { GeoFields } from '../../../shared/geoip/provider.js';
 import type { FastifyInstance } from 'fastify';
 import { Type } from '@sinclair/typebox';
 import type { AuthService } from '../application/auth.service.js';
+import { MfaRequiredError } from '../domain/errors.js';
 import { registerDomainErrorHandler } from '../../../shared/http-errors.js';
 import {
   AcceptedBody,
@@ -35,6 +36,7 @@ import { CursorPageQuery } from '@meetops/contracts';
 import { paginate } from '../../../shared/pagination.js';
 import type { OrganizationService } from '../../organizations/application/organization.service.js';
 import { toSessionResponse } from './mappers.js';
+import { toUserDto } from '../../users/http/mappers.js';
 import {
   googleAuthRoutes,
   pendingLinkCookie,
@@ -130,7 +132,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Log in',
         description:
-          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). With a pending Google link cookie from /auth/google/callback for this same verified account, links Google and signs out the other sessions. Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked.',
+          'Verifies credentials, revokes any presented session, sets a new httpOnly session cookie and a fresh CSRF cookie (also returned as csrfToken). With a pending Google link cookie from /auth/google/callback for this same verified account, links Google and signs out the other sessions. Generic 401 AUTH_FAILED on failure; 429 when rate-limited or locked. ADR-021: for a user with MFA on, the body is reduced and `mfaRequired` is true; finish with POST /auth/mfa/challenge.',
         body: LoginBody,
         response: { 200: SessionResponse, 401: ErrorBody, 403: ErrorBody, 429: ErrorBody },
       },
@@ -145,6 +147,29 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       const r = await auth.login(request.body, requestMeta(request), g.readToken(request), pending);
       if (request.cookies[pendingLink.name] !== undefined)
         reply.clearCookie(pendingLink.name, pendingLink.attributes);
+      if ('mfaChallenge' in r) {
+        // ADR-021 OQ-17: no session cookie. The body says mfaRequired; the CSRF token stays bound to the pre-session
+        // so the same browser can POST /auth/mfa/challenge. Any old session cookie is cleared (it was revoked).
+        void reply.header('cache-control', 'no-store');
+        reply.clearCookie(security.cookieName, {
+          secure: security.cookieSecure,
+          sameSite: 'lax',
+          path: '/',
+          httpOnly: true,
+        });
+        g.setMfaChallengeCookie(reply, r.mfaChallenge);
+        return {
+          user: toUserDto(r.user),
+          csrfToken: await g.issueCsrf(request, reply),
+          activeOrganizationId: null,
+          role: null,
+          organizations: [],
+          memberships: [],
+          expiresAt: r.mfaChallenge.expiresAt.toISOString(),
+          mfaRequired: true,
+        };
+      }
+      g.clearMfaChallengeCookie(reply);
       g.setSessionCookie(reply, r);
       return {
         ...(await toSessionResponse(r, opts.organizations)),
@@ -217,7 +242,15 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       },
     },
     async (request, reply) => {
-      await g.requireSession(request);
+      // ADR-021: logging out is always allowed, also while the MFA challenge is pending. With only a challenge cookie
+      // (OQ-17: not a session) there is nothing to revoke: drop the challenge and answer 204.
+      try {
+        await g.requireSession(request, { allowMfaPending: true });
+      } catch (e) {
+        if (!(e instanceof MfaRequiredError)) throw e;
+        g.clearSessionCookie(reply);
+        return reply.status(204).send();
+      }
       await auth.logout(g.readToken(request), requestMeta(request));
       g.clearSessionCookie(reply);
       return reply.status(204).send();
@@ -284,7 +317,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
       },
     },
     async (request, reply) => {
-      const { user, session } = await g.requireSession(request);
+      const ctx = await g.requireSession(request);
+      const { user, session } = ctx;
+      // ADR-021 OQ-10: revoking another session needs a fresh step-up; ending your own does not (it is a logout).
+      if (request.params.sessionId !== session.id) auth.requireStepUp(ctx);
       await auth.revokeSession(user.id, request.params.sessionId, requestMeta(request));
       if (request.params.sessionId === session.id) g.clearSessionCookie(reply);
       return reply.status(204).send();
@@ -374,11 +410,15 @@ export async function authRoutes(app: FastifyInstance, opts: AuthPluginOptions) 
         tags,
         summary: 'Current session',
         description:
-          'Returns the authenticated user and active organization. Slides the idle timeout.',
+          'Returns the authenticated user and active organization. Slides the idle timeout. ADR-021: `session` carries the assurance level; while the MFA challenge is pending the body is reduced (no organizations) and `mfaRequired` is true.',
         response: { 200: GetSessionResponse, 401: ErrorBody },
       },
     },
-    async (request) => toSessionResponse(await g.requireSession(request), opts.organizations),
+    async (request) =>
+      toSessionResponse(
+        await g.requireSession(request, { allowMfaPending: true }),
+        opts.organizations,
+      ),
   );
 
   googleAuthRoutes(app, {

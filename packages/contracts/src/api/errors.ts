@@ -23,6 +23,12 @@ export const ApiErrorCode = Type.Union([
   Type.Literal('RATE_LIMITED'),
   Type.Literal('PROVIDER_UNAVAILABLE'),
   Type.Literal('INTERNAL'),
+  /** Unreleased (ADR-021): 403. The user has MFA on and this session has not passed the MFA challenge yet. */
+  Type.Literal('MFA_REQUIRED'),
+  /** Unreleased (ADR-021): 403. A sensitive action needs a fresh step-up (POST /auth/mfa/step-up). */
+  Type.Literal('STEP_UP_REQUIRED'),
+  /** Unreleased (ADR-021): 400. Generic: wrong, reused, expired or unknown TOTP/recovery code (never says which). */
+  Type.Literal('INVALID_MFA_CODE'),
 ]);
 export type ApiErrorCode = Static<typeof ApiErrorCode>;
 export { API_ERROR_CODES } from '../constants.js';

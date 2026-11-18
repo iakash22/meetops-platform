@@ -34,3 +34,21 @@ export class OriginForbiddenError extends DomainError {
     super('FORBIDDEN', 'Origin not allowed', 403);
   }
 }
+/** ADR-021: the user has MFA on and this session has not passed POST /auth/mfa/challenge yet. */
+export class MfaRequiredError extends DomainError {
+  constructor() {
+    super('MFA_REQUIRED', 'Multi-factor authentication required', 403);
+  }
+}
+/** ADR-021 D4: a sensitive action needs a fresh step-up (POST /auth/mfa/step-up). */
+export class StepUpRequiredError extends DomainError {
+  constructor() {
+    super('STEP_UP_REQUIRED', 'Re-verify with your authenticator to continue', 403);
+  }
+}
+/** ADR-021: wrong, reused, expired or unknown TOTP / recovery code, or unknown pending factor. Never says which. */
+export class InvalidMfaCodeError extends DomainError {
+  constructor() {
+    super('INVALID_MFA_CODE', 'Invalid verification code', 400);
+  }
+}

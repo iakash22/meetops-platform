@@ -23,8 +23,18 @@ const GLOBAL_AUTH_ACTIONS: Partial<Record<AuditAction, string>> = {
   'auth.email.verify': 'auth.email_verified',
   'auth.email.verification_resend': 'auth.email_verification_sent',
   'auth.google.linked': 'auth.google_linked',
+  // ADR-021 (migration 20261111180000_mfa_totp). MFA lockout is a failed challenge with `metadata.lockedForMs`.
+  'auth.mfa.enroll': 'auth.mfa_enrolled',
+  'auth.mfa.confirm': 'auth.mfa_confirmed',
+  'auth.mfa.disable': 'auth.mfa_disabled',
+  'auth.mfa.challenge.success': 'auth.mfa_challenge_succeeded',
+  'auth.mfa.challenge.failure': 'auth.mfa_challenge_failed',
+  'auth.mfa.lockout': 'auth.mfa_challenge_failed',
+  'auth.mfa.step_up': 'auth.mfa_step_up',
+  'auth.mfa.recovery_code.used': 'auth.mfa_recovery_code_used',
+  'auth.mfa.recovery_codes.regenerate': 'auth.mfa_recovery_codes_regenerated',
 };
-const GLOBAL_TARGET_TYPES = new Set(['user', 'session', 'email']);
+const GLOBAL_TARGET_TYPES = new Set(['user', 'session', 'email', 'mfa_factor']);
 
 export class UnmappedGlobalAuditError extends Error {
   constructor(readonly action: string) {

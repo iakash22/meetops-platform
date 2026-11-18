@@ -82,7 +82,10 @@ export async function extensionAuthRoutes(app: FastifyInstance, opts: ExtensionA
       },
     },
     async (request, reply) => {
-      const { user, session } = await g.requireSession(request);
+      const ctx = await g.requireSession(request);
+      // ADR-021 OQ-10: Pairing the extension mints a long-lived bearer family: it needs a fresh step-up.
+      auth.requireStepUp(ctx);
+      const { user, session } = ctx;
       void reply.header('cache-control', 'no-store');
       return extensionAuth.pair(
         { userId: user.id, activeOrganizationId: session.activeOrganizationId },
