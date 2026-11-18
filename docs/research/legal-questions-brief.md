@@ -232,25 +232,52 @@ stores an org country; `docs/research/competitive-landscape.md` §4 records this
 28. Consent-record retention. Section 6(10) puts on the Data Fiduciary the burden to prove that notice was given and
     consent obtained. How long should we keep signed eval consent forms, the consent register and withdrawal records
     after the related data is deleted (protocol §5 leaves "[period for counsel]")? The Rules set no period for a
-    Fiduciary's own consent records. Rule 8(3) requires processing logs to be kept for at least one year, and Consent
-    Managers must keep consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is either a sensible
-    benchmark, and how does a longer period sit with s. 8(7) erasure and data minimisation?
+    Fiduciary's own consent records. Rule 8(3) is narrower than a general log rule: it requires a Data Fiduciary to retain
+    "such personal data, associated traffic data and other logs of the processing" for at least one year "for the
+    purposes as specified in the Seventh Schedule", and then to erase them unless another law requires longer [L14]. The
+    Seventh Schedule lists three purposes: (1) use by the State or any of its instrumentalities "in the interest of
+    sovereignty and integrity of India or security of the State"; (2) use by the State or its instrumentalities for
+    "performance of any function under any law for the time being in force in India" or "disclosure of any information
+    for fulfilling any obligation under any law for the time being in force in India"; and (3) "assessment for notifying
+    any Data Fiduciary or class of Data Fiduciaries as Significant Data Fiduciary" [L14]. Rule 23 is not a purpose: it
+    is the Central Government's power to call for information from a Data Fiduciary or intermediary for those Seventh
+    Schedule purposes, through the authorised person the Schedule names. Rule 8(3) is not a consent-record rule.
+    Consent Managers must keep consent records for at least seven years (First Schedule, Part B, item 4(c)) [L14]. Is
+    either a sensible benchmark, and how does a longer period sit with s. 8(7) erasure and data minimisation?
+29. Rule 8(3) and account deletion. Rule 8(3) requires keeping "such personal data, associated traffic data and other
+    logs of the processing" for at least a year, and its illustration says the platform keeps them "even if X deletes
+    her account". For a meeting app, does that cover meeting content (recordings, transcripts) or only records of the
+    processing? ADR-019 assumes the latter. Details and sources:
+    [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §2 (E2).
+30. Consent evidence after account or org deletion. How long may we keep pseudonymised consent attestations and
+    meeting consent events after the attesting user, or the whole org, is deleted? Is s. 6(10) a basis when the
+    attestation is the host's statement about other participants, and what limitation period should set the end date,
+    in India and for GDPR Art. 17(3)(e)? See [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §2.2.
+31. Grace period and GDPR timing. For EU users, is a 30-day grace the user chose, followed by deletion and 35-day backup
+    roll-off, compatible with Art. 12(3)'s "within one month"? Or must the grace be shorter or optional? See
+    [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §4.3.
+32. Whose meetings are they? When a member deletes their account, are meetings they recorded in someone else's org the
+    org's data (kept) or theirs (deleted, or their voice and name removed from transcripts)? Does it change if MeetOps
+    is a Processor for that org ([dpdp-role-and-dpa-outline.md](dpdp-role-and-dpa-outline.md))?
+33. Is pseudonymisation erasure? Is a `users` row scrubbed down to its uuid "erased" under s. 12(3), given it still
+    links consent and audit rows? GDPR Recital 26 treats pseudonymised data as personal data. See
+    [account-deletion-erasure-brief.md](account-deletion-erasure-brief.md) §2.2.
 
 ## Sources (fetched 2026-11-11; L13–L14 read 2026-11-18)
 
-| ID  | Source                                                                                                                                                                                                                                |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| L1  | Order granting motion to dismiss in part, _In re Otter.ai Privacy Litigation_, 5:25-cv-06911-EKL, Dkt. 68 (13 Aug 2026): https://storage.courtlistener.com/recap/gov.uscourts.cand.454675/gov.uscourts.cand.454675.68.0.pdf           |
-| L2  | Consolidated Class Action Complaint, _Fricker v. Fireflies.AI Corp._, 1:26-cv-02675, Dkt. 27 (24 Jun 2026): https://storage.courtlistener.com/recap/gov.uscourts.ilnd.496785/gov.uscourts.ilnd.496785.27.0.pdf                        |
-| L3  | Docket summary by Scribbl (a competitor), updated 19 Oct 2026; **secondary**: https://scribbl.co/post/fireflies-ai-lawsuit                                                                                                            |
-| L4  | Class Action Complaint, _Chamberlain v. Granola, Inc._, 3:26-cv-07926 (30 Jul 2026): https://storage.courtlistener.com/recap/gov.uscourts.cand.475308/gov.uscourts.cand.475308.1.0.pdf                                                |
-| L5  | Docket, _Basich v. Microsoft Corp._, 2:26-cv-00422 (W.D. Wash.): https://www.courtlistener.com/docket/72237819/basich-v-microsoft-corporation/                                                                                        |
-| L6  | Darrow, "Evaluating Litigation Risk: Basich v. Microsoft" (16 Feb 2026); **secondary**, describes the diarization theory: https://www.darrow.ai/resources/evaluating-litigation-risk-basich-v-microsoft                               |
-| L7  | 740 ILCS 14 (BIPA), Illinois General Assembly: https://www.ilga.gov/legislation/ilcs/ilcs3.asp?ActID=3004&ChapterID=57                                                                                                                |
-| L8  | Regulation (EU) 2024/1689 (AI Act), EUR-Lex: https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202401689                                                                                                                  |
-| L9  | Regulation (EU) 2026/1744 (Digital Omnibus on AI), EUR-Lex: https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng                                                                                                                        |
-| L10 | European Commission, Guidelines on transparency obligations (Art. 50): https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-transparency-obligations                                                                       |
-| L11 | Houthoff, "AI Act: transparency obligations and the AI Omnibus Regulation" (1 Sep 2026); law-firm summary: https://www.houthoff.com/insights/news/ai-act-transparency-obligations-and-the-ai-omnibus-regulation/                      |
-| L12 | Taft, "AI-Powered Call Transcription Tools Present Class Action BIPA Risk" (8 Sep 2026); legal press on L1: https://www.privacyanddatasecurityinsight.com/2026/09/ai-powered-call-transcription-tools-present-class-action-bipa-risk/ |
-| L13 | Digital Personal Data Protection Act, 2023 (No. 22 of 2023), ss. 2(t), 6(4)–(6), 6(10), 8(7), Gazette text on MeitY: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                             |
-| L14 | DPDP Rules, 2025 (G.S.R. 846(E), Gazette No. 760), Rule 8(3) and First Schedule Part B item 4(c), MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf                                    |
+| ID  | Source                                                                                                                                                                                                                                         |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L1  | Order granting motion to dismiss in part, _In re Otter.ai Privacy Litigation_, 5:25-cv-06911-EKL, Dkt. 68 (13 Aug 2026): https://storage.courtlistener.com/recap/gov.uscourts.cand.454675/gov.uscourts.cand.454675.68.0.pdf                    |
+| L2  | Consolidated Class Action Complaint, _Fricker v. Fireflies.AI Corp._, 1:26-cv-02675, Dkt. 27 (24 Jun 2026): https://storage.courtlistener.com/recap/gov.uscourts.ilnd.496785/gov.uscourts.ilnd.496785.27.0.pdf                                 |
+| L3  | Docket summary by Scribbl (a competitor), updated 19 Oct 2026; **secondary**: https://scribbl.co/post/fireflies-ai-lawsuit                                                                                                                     |
+| L4  | Class Action Complaint, _Chamberlain v. Granola, Inc._, 3:26-cv-07926 (30 Jul 2026): https://storage.courtlistener.com/recap/gov.uscourts.cand.475308/gov.uscourts.cand.475308.1.0.pdf                                                         |
+| L5  | Docket, _Basich v. Microsoft Corp._, 2:26-cv-00422 (W.D. Wash.): https://www.courtlistener.com/docket/72237819/basich-v-microsoft-corporation/                                                                                                 |
+| L6  | Darrow, "Evaluating Litigation Risk: Basich v. Microsoft" (16 Feb 2026); **secondary**, describes the diarization theory: https://www.darrow.ai/resources/evaluating-litigation-risk-basich-v-microsoft                                        |
+| L7  | 740 ILCS 14 (BIPA), Illinois General Assembly: https://www.ilga.gov/legislation/ilcs/ilcs3.asp?ActID=3004&ChapterID=57                                                                                                                         |
+| L8  | Regulation (EU) 2024/1689 (AI Act), EUR-Lex: https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202401689                                                                                                                           |
+| L9  | Regulation (EU) 2026/1744 (Digital Omnibus on AI), EUR-Lex: https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng                                                                                                                                 |
+| L10 | European Commission, Guidelines on transparency obligations (Art. 50): https://digital-strategy.ec.europa.eu/en/policies/guidelines-ai-transparency-obligations                                                                                |
+| L11 | Houthoff, "AI Act: transparency obligations and the AI Omnibus Regulation" (1 Sep 2026); law-firm summary: https://www.houthoff.com/insights/news/ai-act-transparency-obligations-and-the-ai-omnibus-regulation/                               |
+| L12 | Taft, "AI-Powered Call Transcription Tools Present Class Action BIPA Risk" (8 Sep 2026); legal press on L1: https://www.privacyanddatasecurityinsight.com/2026/09/ai-powered-call-transcription-tools-present-class-action-bipa-risk/          |
+| L13 | Digital Personal Data Protection Act, 2023 (No. 22 of 2023), ss. 2(t), 5, 6(1)–(6), 6(10), 8(7), Gazette text on MeitY: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf                                   |
+| L14 | DPDP Rules, 2025 (G.S.R. 846(E), Gazette No. 760), Rule 3, Rule 8(3) with the Seventh Schedule, Rule 23, and First Schedule Part B item 4(c), MeitY copy: https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf |
