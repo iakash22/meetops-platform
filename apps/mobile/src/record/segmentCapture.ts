@@ -12,6 +12,12 @@ export function normalizeStop(r: SegmentStopResult | LocalChunk[]): SegmentStopR
 import type { RecordingDraft } from './capture';
 import type { FileChunkStore } from './fileChunkStore';
 import type { ForegroundIndicator, NativeCapture, RecorderFileGuard } from './nativeCapture';
+import { isLiveActivityId } from './liveActivity';
+import {
+  PAUSED_NOTIFICATION_TITLE,
+  RECORDING_NOTIFICATION_BODY,
+  RECORDING_NOTIFICATION_TITLE,
+} from './recordingIndicator';
 
 /** Native side (modules/chunk-crypto SegmentRecorderModule.kt). Injectable for tests. */
 export interface SegmentRecorder {
@@ -75,11 +81,26 @@ export function createSegmentCapture(
   let paused = false;
   let recovery: Promise<void> | null = null;
 
+  let indicatorId: string | null = null;
+
   const stopIndicator = () => {
+    const id = indicatorId;
+    indicatorId = null;
+    if (!isLiveActivityId(id)) return;
     try {
-      indicator?.stop();
+      indicator?.stop(id);
     } catch {
       // Already gone.
+    }
+  };
+
+  const updateIndicator = (title: string) => {
+    const id = indicatorId;
+    if (!isLiveActivityId(id)) return;
+    try {
+      indicator?.update(id, title, RECORDING_NOTIFICATION_BODY);
+    } catch {
+      // Best effort: a failed notification update must not affect capture.
     }
   };
 
@@ -104,7 +125,13 @@ export function createSegmentCapture(
       if (!(await options.canRecord())) throw new Error('Microphone permission is required.');
       await store.ready();
       const dir = store.chunkDir(recordingId);
-      indicator?.start();
+      if (indicator) {
+        const id = indicator.start();
+        if (!isLiveActivityId(id)) {
+          throw new Error('The recording notification could not be started.');
+        }
+        indicatorId = id;
+      }
       try {
         await store.setMarker({ uri: dir, phase: 'recording', recordingId });
         await native.start(dir, segmentMs);
@@ -122,11 +149,13 @@ export function createSegmentCapture(
       if (!active || paused) return;
       native.pause();
       paused = true;
+      updateIndicator(PAUSED_NOTIFICATION_TITLE);
     },
     resume() {
       if (!active || !paused) return;
       native.resume();
       paused = false;
+      updateIndicator(RECORDING_NOTIFICATION_TITLE);
     },
     isLive() {
       if (!active) return false;

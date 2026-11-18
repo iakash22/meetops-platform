@@ -219,7 +219,8 @@ describe('android foreground service indicator (R2)', () => {
     return {
       calls,
       press: () => stopListener(),
-      start: () => void calls.push('fgs:start'),
+      start: () => (calls.push('fgs:start'), 'svc-1'),
+      update: () => undefined,
       stop: () => void calls.push('fgs:stop'),
       confirmed: true,
       isConfirmed() {
@@ -272,6 +273,38 @@ describe('android foreground service indicator (R2)', () => {
     );
     await expect(cap.begin('rec-1')).rejects.toThrow('denied');
     expect(driver.calls).not.toContain('record');
+  });
+
+  it('passes the id from start to stop, and refuses to record when start returns no id', async () => {
+    const { driver, uri } = fakeDriver();
+    const fs = createMemoryFs();
+    const seen: string[] = [];
+    const fgs = {
+      ...indicator(),
+      start: () => (seen.push('start'), 'svc-99'),
+      stop: (id: string) => seen.push(`stop:${id}`),
+    };
+    const cap = createNativeCapture(driver, createFileChunkStore(fs, testCipher), fgs);
+    await cap.begin('rec-1');
+    fs.put(uri, bytes(3));
+    await cap.capture('rec-1', 1);
+    expect(seen).toEqual(['start', 'stop:svc-99']);
+
+    const empty = {
+      ...indicator(),
+      start: () => null,
+      stop: (id: string) => seen.push(`stop:${id}`),
+    };
+    const cap2 = createNativeCapture(
+      fakeDriver().driver,
+      createFileChunkStore(createMemoryFs(), testCipher),
+      empty,
+    );
+    const before = seen.length;
+    await expect(cap2.begin('rec-2')).rejects.toThrow(
+      'recording notification could not be started',
+    );
+    expect(seen.length).toBe(before);
   });
 
   // Tester r4 item 1: a Start that fails right after the service was asked to start must take the
@@ -341,7 +374,8 @@ describe('android foreground service indicator (R2)', () => {
 it('keeps the original begin error when stopping the service also throws', async () => {
   const { driver } = fakeDriver({ prepare: () => Promise.reject(new Error('prepare failed')) });
   const fgs = {
-    start: () => undefined,
+    start: () => 'svc-1',
+    update: () => undefined,
     stop: () => {
       throw new Error('stop failed');
     },

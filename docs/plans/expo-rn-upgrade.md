@@ -2,13 +2,15 @@
 
 Status: proposal. Needs Maddy's Expo/RN decision (AR-5). Owner: Mobile, with DevOps for the lockfile slot and the audit gate.
 Baseline: `integration/phase-1` @ `e4aceac` (merge of #342, 31 Oct 2026 20:49 IST).
-Risk exceptions: RE-03 (`node-forge`) and RE-04 (`image-size`). Both expire **24 Nov 2026 23:59 UTC** (`scripts/audit-gate.mjs`).
+Risk exceptions: RE-03 (`node-forge`) and RE-04 (`image-size`) are both **closed** (RE-04 on 11 Nov 2026 through the
+#412 override and metro patch; see `docs/12-security/risk-exceptions.md`). This upgrade no longer has a gate deadline.
 Version and advisory facts below were checked against the npm registry, the GitHub Advisory Database and the Expo
 release notes on 1 Nov 2026 (IST). Re-check them before the lockfile PR.
 
 ## 0. Summary
 
-- **RE-04 needs this upgrade.** `image-size@1.2.1` (GHSA-5p2g-fcmc-qvqq, GHSA-w3rx-r6r6-pgpr, both high, fixed in
+- **RE-04 no longer needs this upgrade** (update 11 Nov 2026: #412 overrides image-size to `^2.0.3` and patches
+  metro 0.81.5, so the lockfile resolves only 2.0.4 and the gate rows are removed). Original reasoning: `image-size@1.2.1` (GHSA-5p2g-fcmc-qvqq, GHSA-w3rx-r6r6-pgpr, both high, fixed in
   2.0.3) reaches us only through `react-native@0.76.9` → `@react-native/community-cli-plugin@0.76.9` → `metro@0.81.5`.
   Metro dropped `image-size` in **0.83.8** (2026-08-19). The oldest Expo SDK that pins a Metro without it is **SDK 55**.
 - **RE-03 does not need this upgrade.** Root `pnpm.overrides` already forces `node-forge@<1.4.2` to `1.4.2` (b9521567,
@@ -67,7 +69,7 @@ Why SDK 55:
 - It stays on Node 20 (Expo lists `^20.19.4` as supported for SDK 55) and on iOS 15.1 minimum, which matches our
   podspecs (`s.platforms = { :ios => '15.1' }`).
 - SDK 56+ adds an iOS 16.4 minimum and a bigger RN jump. Nothing in RE-03/RE-04 needs it. Plan SDK 56/57 as a separate,
-  unhurried upgrade after RE-04 is closed.
+  unhurried upgrade (RE-04 is already closed, #476).
 - SDK 58 is the only option that also drops `query-string`/`decode-uri-component`, but RN 0.88 requires Node 22. That
   is a repo-wide toolchain change (CI matrix, engines `>=20.19 <25`, corepack images), so it is out of scope here.
 
@@ -173,7 +175,7 @@ commits so a reviewer can follow them:
    - fix any remaining type errors.
 6. Native: `npx expo prebuild --clean`, then local or EAS **development** builds for Android and iOS (Xcode 26).
 7. Device checklist (§5), and fix anything it finds.
-8. Gate PR, same branch: delete the RE-04 rows from `scripts/audit-gate.mjs` and mark RE-04 closed in
+8. Gate PR, same branch (already done in #476, through the override): delete the RE-04 rows from `scripts/audit-gate.mjs` and mark RE-04 closed in
    `docs/12-security/risk-exceptions.md`. Do the same for RE-03 if it has not already gone in its own PR.
 9. Update `apps/mobile/README.md` (version notes, overrides list) and `docs/mobile/plan.md`.
 
@@ -203,10 +205,11 @@ Only one lockfile PR at a time. The order in `meetops-reports/dependency-triage.
 
 - RE-01 (`braces`) no longer needs a lockfile change, because GHSA-vfj7-8cjw-p6xm was **withdrawn** on 23 Oct 2026. See
   `docs/plans/tailwind4-migration.md`. D4 (Tailwind 4) therefore has no deadline.
-- RE-04 has a hard date (24 Nov). The Expo PR needs about 2 days of review and device time after it is built.
+- RE-04 is closed (#476: the `image-size` override and metro patch from #412), so the Expo PR no longer has a hard
+  date. It still needs about 2 days of review and device time after it is built.
 
-Proposed order: finish whichever lockfile PR currently holds the slot, then **Expo SDK 55 next**, ahead of D4/D6. Ask
-the coordinator for the slot by **10 Nov 2026** at the latest. If the decode-uri-component fix is option (b), it is a
+Proposed order: finish whichever lockfile PR currently holds the slot, then Expo SDK 55 or D4/D6 by coordinator
+priority (no gate deadline remains). If the decode-uri-component fix is option (b), it is a
 lockfile change too, so either fold it into the Expo PR or run it straight after.
 
 ## 7. RE-03: close without a lockfile change
@@ -224,8 +227,9 @@ lockfile change too, so either fold it into the Expo PR or run it straight after
 - After merge: `git revert -m 1 <merge-sha>` (a plain revert, no force push). That restores `pnpm-lock.yaml`,
   `package.json`, the patch file and the gate rows together. The revert is itself a lockfile PR, so tell the
   coordinator.
-- If it is reverted after 24 Nov, RE-04 has to be re-excepted with a new expiry (Security sign-off). Do not edit the
-  expired row in place.
+- A revert does not reopen RE-04 as long as the root `image-size@<2.0.3` override and the metro patch stay in place.
+  If a revert would bring back `image-size` 1.x, add a new exception (new ID, Security sign-off) instead of reusing
+  RE-04.
 - Builds: development and preview channels in `eas.json`. Keep the last SDK 52 dev build installed on the test devices
   until the checklist passes. Do not publish an OTA update from the SDK 55 runtime to an SDK 52 binary; the runtime
   versions differ.
@@ -243,10 +247,9 @@ lockfile change too, so either fold it into the Expo PR or run it straight after
 
 ## 10. Risks
 
-| Risk                                                                                   | Mitigation                                                                                    |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| First New Architecture build exposes native-module bugs (foreground service, Keystore) | Start the native build on day 1. The modules are small and already on the Expo Modules API.   |
-| expo-audio's reworked foreground service clashes with `recording-service`              | Keep expo-audio background recording off. Device-test background capture on Android 14+.      |
-| Swift 6 strict concurrency errors in local modules                                     | Fix with `@MainActor`/`Sendable`, or lower the module's Swift language mode in its podspec.   |
-| `pnpm install` churns unrelated importers                                              | Review the lockfile diff by importer. Only `apps/mobile` and root should change.              |
-| RE-04 deadline missed                                                                  | Ask for the slot by 10 Nov. Fallback: a Security-approved extension of RE-04 with a new date. |
+| Risk                                                                                   | Mitigation                                                                                  |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| First New Architecture build exposes native-module bugs (foreground service, Keystore) | Start the native build on day 1. The modules are small and already on the Expo Modules API. |
+| expo-audio's reworked foreground service clashes with `recording-service`              | Keep expo-audio background recording off. Device-test background capture on Android 14+.    |
+| Swift 6 strict concurrency errors in local modules                                     | Fix with `@MainActor`/`Sendable`, or lower the module's Swift language mode in its podspec. |
+| `pnpm install` churns unrelated importers                                              | Review the lockfile diff by importer. Only `apps/mobile` and root should change.            |
