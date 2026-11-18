@@ -145,6 +145,7 @@ export async function processRecordingTranscription(
 
   let chunk = scope.existing;
   let providerCalled = false;
+  let fresh: ChunkTranscript | undefined;
   if (!chunk) {
     let result: TranscribeResult;
     try {
@@ -179,7 +180,7 @@ export async function processRecordingTranscription(
       }
       throw e;
     }
-    const fresh = toWholeRecordingChunk(result, now().toISOString());
+    fresh = toWholeRecordingChunk(result, now().toISOString());
     chunk = await repo.withOrgContext(organizationId, async (r) =>
       (await r.putChunkResult(meetingId, recordingId, fresh))
         ? fresh
@@ -189,14 +190,21 @@ export async function processRecordingTranscription(
 
   if (deps.onProviderTranscriptStored) {
     try {
-      await deps.onProviderTranscriptStored({
-        organizationId,
-        meetingId,
-        recordingId,
-        chunkIndex: chunk.chunkIndex,
-        provider: chunk.provider,
-        ...(chunk.providerJobId ? { providerJobId: chunk.providerJobId } : {}),
-      });
+      // First-write losers are not in the stored row; enqueue their id too, deduped.
+      const ids = new Set<string>();
+      if (chunk.providerJobId) ids.add(chunk.providerJobId);
+      if (fresh?.providerJobId) ids.add(fresh.providerJobId);
+      const hookIds: Array<string | undefined> = ids.size > 0 ? [...ids] : [undefined];
+      for (const providerJobId of hookIds) {
+        await deps.onProviderTranscriptStored({
+          organizationId,
+          meetingId,
+          recordingId,
+          chunkIndex: chunk.chunkIndex,
+          provider: chunk.provider,
+          ...(providerJobId ? { providerJobId } : {}),
+        });
+      }
     } catch {
       return fail('provider_delete_enqueue_failed', true);
     }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isRelaxedNodeEnv } from './provider-data-tier.js';
 import {
   assemblyAiSpeechModelsFromEnv,
   DEFAULT_ASSEMBLYAI_SPEECH_MODELS,
@@ -72,7 +73,7 @@ export function loadAIEnv(
   source: Record<string, string | undefined> = process.env,
   opts: { production?: boolean | undefined } = {},
 ): LoadedAIEnv {
-  const production = opts.production ?? source.NODE_ENV === 'production';
+  const production = opts.production ?? !isRelaxedNodeEnv(source.NODE_ENV);
   const errors: string[] = [];
   const parsed = aiEnvSchema.safeParse(source);
   let env: AIEnv;

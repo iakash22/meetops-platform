@@ -211,6 +211,18 @@ describe('Prisma transcript repository', () => {
         ORG,
       ).listProviderJobIds(MEET, REC),
     ).toEqual([]);
+    expect(
+      await createOrgScopedTranscriptRepository(
+        fakeTx({
+          chunkSegments: [
+            { chunkIndex: 0, segments: [], providerJobId: 12345 },
+            { chunkIndex: 1, segments: [], providerJobId: 'tr-ok' },
+          ],
+          providerJobId: 'tr-legacy',
+        }),
+        ORG,
+      ).listProviderJobIds(MEET, REC),
+    ).toEqual(['tr-ok', 'tr-legacy']);
   });
 
   it('drops malformed chunk JSON when listing', async () => {

@@ -248,6 +248,45 @@ describe('provider transcript delete enqueue', () => {
     ).toEqual({ enqueued: false, reason: 'invalid_id' });
     expect(adds).toEqual([]);
   });
+
+  it('logs invalid_id enqueue results with ids and reason only, no content', async () => {
+    const adds: unknown[] = [];
+    const log = logger();
+    const queue: ProviderTranscriptDeleteQueueLike = {
+      add: async (_name, data, opts) => {
+        adds.push({ data, opts });
+      },
+    };
+    const trigger = createQueueProviderTranscriptDeleteTrigger(queue, {
+      enabled: true,
+      logger: log.logger,
+    });
+    await trigger({
+      organizationId: ORG,
+      meetingId: MEET,
+      recordingId: REC,
+      chunkIndex: 0,
+      provider: 'assemblyai',
+      providerJobId: 'not a valid id!!!',
+    });
+    expect(adds).toEqual([]);
+    const invalid = log.entries.filter((e) => e.msg.includes('invalid_id'));
+    expect(invalid).toHaveLength(1);
+    expect(invalid[0]).toMatchObject({
+      level: 'warn',
+      msg: 'provider transcript delete skipped: invalid_id',
+      obj: {
+        organizationId: ORG,
+        meetingId: MEET,
+        recordingId: REC,
+        chunkIndex: 0,
+        provider: 'assemblyai',
+        providerTranscriptId: 'not a valid id!!!',
+        reason: 'invalid_id',
+      },
+    });
+    expect(log.blob()).not.toContain(SECRET);
+  });
 });
 
 describe('processProviderTranscriptDelete', () => {

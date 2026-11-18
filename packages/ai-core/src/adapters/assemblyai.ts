@@ -8,6 +8,7 @@ import type {
 import { AIError, toAIError } from '../errors.js';
 import { guardedFetch, type HttpOpts } from './http.js';
 import { DEFAULT_ASSEMBLYAI_SPEECH_MODELS } from '../assemblyai-speech-models.js';
+import { isValidProviderTranscriptId } from '../assemblyai-ids.js';
 import { realSleep, type Sleeper } from '../retry.js';
 
 export const ASSEMBLYAI_BASE_URL = 'https://api.assemblyai.com';
@@ -105,7 +106,7 @@ export class AssemblyAIProvider implements TranscriptionProvider {
           ...sig,
         })
       ).json<Transcript>();
-      if (!/^[A-Za-z0-9-]+$/.test(created.id ?? ''))
+      if (!isValidProviderTranscriptId(created.id ?? ''))
         throw new AIError('INVALID_OUTPUT', 'unexpected transcript id', {
           provider: this.providerId,
           retryable: false,
@@ -181,7 +182,7 @@ export class AssemblyAIProvider implements TranscriptionProvider {
     id: string,
     signal?: AbortSignal,
   ): Promise<{ outcome: 'deleted' | 'already_deleted'; httpStatus: number }> {
-    if (!/^[A-Za-z0-9-]+$/.test(id)) {
+    if (!isValidProviderTranscriptId(id)) {
       throw new AIError('INVALID_OUTPUT', 'unexpected transcript id', {
         provider: this.providerId,
         retryable: false,

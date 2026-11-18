@@ -4,6 +4,7 @@ import {
   parseAssemblyAiSpeechModels,
   assemblyAiSpeechModelsFromEnv,
   InvalidAssemblyAiSpeechModelsError,
+  isValidProviderTranscriptId,
 } from '@meetops/ai-core';
 import { ProviderError, providerFetch, readJson, type FetchLike } from './errors.js';
 import type {
@@ -221,8 +222,7 @@ export class AssemblyAiTranscriptionProvider implements TranscriptionProvider {
     providerJobId: string,
     signal?: AbortSignal,
   ): Promise<TranscribeResult | { status: 'pending' }> {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(providerJobId))
-      throw new ProviderError(ID, 'invalid_request');
+    if (!isValidProviderTranscriptId(providerJobId)) throw new ProviderError(ID, 'invalid_request');
     const res = await this.call(`/v2/transcript/${providerJobId}`, { method: 'GET' }, signal);
     const body = (await readJson(ID, res)) as AaiTranscript;
     if (body?.status === 'completed') return mapAssemblyAiTranscript(body, this.models[0]!);

@@ -33,7 +33,7 @@ describe('env validation', () => {
     expect(availability.find((a) => a.provider === 'assemblyai')?.available).toBe(false);
   });
   it('bad values reported, defaults used', () => {
-    const { env, errors } = loadAIEnv({ OLLAMA_BASE_URL: 'not a url' });
+    const { env, errors } = loadAIEnv({ OLLAMA_BASE_URL: 'not a url', NODE_ENV: 'test' });
     expect(errors.length).toBe(1);
     expect(env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
   });
@@ -65,6 +65,18 @@ describe('env validation', () => {
       loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'universal' }, { production: true }),
     ).toThrow(/ASSEMBLYAI_SPEECH_MODELS/);
   });
+  it('fails closed for typo, staging, and unset NODE_ENV', () => {
+    expect(() => loadAIEnv({ OLLAMA_BASE_URL: 'not a url', NODE_ENV: 'producton' })).toThrow(
+      /OLLAMA_BASE_URL/,
+    );
+    expect(() => loadAIEnv({ OLLAMA_BASE_URL: 'not a url', NODE_ENV: 'staging' })).toThrow(
+      /OLLAMA_BASE_URL/,
+    );
+    expect(() => loadAIEnv({ OLLAMA_BASE_URL: 'not a url' })).toThrow(/OLLAMA_BASE_URL/);
+    const relaxed = loadAIEnv({ OLLAMA_BASE_URL: 'not a url', NODE_ENV: 'development' });
+    expect(relaxed.errors.length).toBe(1);
+    expect(relaxed.env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
+  });
   it('parses ASSEMBLYAI_SPEECH_MODELS and the legacy singular alias', () => {
     expect(
       loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'assemblyai-stt-3-7, universal-2' }).env
@@ -73,7 +85,7 @@ describe('env validation', () => {
     expect(
       loadAIEnv({ ASSEMBLYAI_SPEECH_MODEL: 'universal-2' }).env.ASSEMBLYAI_SPEECH_MODELS,
     ).toEqual(['universal-2']);
-    const bad = loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'universal' });
+    const bad = loadAIEnv({ ASSEMBLYAI_SPEECH_MODELS: 'universal', NODE_ENV: 'test' });
     expect(bad.errors).toContain('ASSEMBLYAI_SPEECH_MODELS: invalid');
     expect(bad.env.ASSEMBLYAI_SPEECH_MODELS).toEqual(['assemblyai-stt-3-7']);
   });

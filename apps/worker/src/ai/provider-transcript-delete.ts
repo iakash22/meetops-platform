@@ -14,6 +14,8 @@ import {
   isRelaxedNodeEnv,
   loadAIEnv,
   toAIError,
+  isValidProviderTranscriptId,
+  PROVIDER_TRANSCRIPT_ID_PATTERN,
   type OnProviderTranscriptStored,
   type StoredProviderTranscript,
 } from '@meetops/ai-core';
@@ -21,17 +23,12 @@ import { createAppRedis } from '../redis.js';
 import { logger as baseLogger } from '../logger.js';
 import type { TranscriptionLogger } from './consumer.js';
 
+export { isValidProviderTranscriptId, PROVIDER_TRANSCRIPT_ID_PATTERN };
+
 export const PROVIDER_TRANSCRIPT_DELETE_QUEUE = 'ai-provider-transcript-delete';
 export const PROVIDER_TRANSCRIPT_DELETE_JOB_NAME = 'delete_provider_transcript';
 export const PROVIDER_TRANSCRIPT_DELETE_ATTEMPTS = 5;
 export const PROVIDER_TRANSCRIPT_DELETE_BACKOFF_MS = 2_000;
-/** AssemblyAI transcript ids (and our deterministic jobId suffix). */
-export const PROVIDER_TRANSCRIPT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-
-export function isValidProviderTranscriptId(id: string): boolean {
-  return PROVIDER_TRANSCRIPT_ID_PATTERN.test(id);
-}
-
 export type ProviderTranscriptDeleteJob = {
   organizationId: string;
   provider: 'assemblyai';
@@ -214,7 +211,7 @@ export function createQueueProviderTranscriptDeleteTrigger(
       return;
     }
     for (const providerTranscriptId of ids) {
-      await enqueueProviderTranscriptDelete(
+      const result = await enqueueProviderTranscriptDelete(
         queue,
         {
           organizationId: info.organizationId,
@@ -225,6 +222,21 @@ export function createQueueProviderTranscriptDeleteTrigger(
         },
         opts,
       );
+      if (result.reason === 'invalid_id') {
+        // Ids and reason only — never transcript content.
+        opts.logger?.warn(
+          {
+            organizationId: info.organizationId,
+            meetingId: info.meetingId,
+            recordingId: info.recordingId,
+            chunkIndex: info.chunkIndex,
+            provider: info.provider,
+            providerTranscriptId,
+            reason: result.reason,
+          },
+          'provider transcript delete skipped: invalid_id',
+        );
+      }
     }
   };
 }
