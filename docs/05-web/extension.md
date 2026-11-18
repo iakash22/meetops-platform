@@ -18,6 +18,8 @@ pnpm --filter @meetops/extension test:e2e   # build + real Alt+Shift+M gesture i
 
 `test:e2e` needs Playwright Chromium, `xvfb` and `xdotool`, and `@meetops/contracts` built first. It isn't in CI yet: `.github` is DevOps' area, and #52 lists what's needed.
 
+Build-time origins and flags are documented in `apps/extension/.env.example` and `apps/extension/README.md`. `WXT_PRIVACY_URL` (an absolute https URL, or a path resolved against `WXT_WEB_ORIGIN`) drives a Privacy Policy link in the popup and on the options page. The link opens in a new tab and is omitted when the env var is unset. Production builds (`wxt build`) warn, but do not fail, if it is missing.
+
 ## Permissions
 
 | Permission   | Why                                                                                                                                                  |

@@ -43,3 +43,4 @@ export * from './transcription/queue.js';
 export * from './credential-ref.js';
 export * from './output-limits.js';
 export * from './embeddings.js';
+export * from './provider-data-tier.js';

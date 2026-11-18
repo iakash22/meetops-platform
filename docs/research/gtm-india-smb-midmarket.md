@@ -79,6 +79,9 @@ Caveats:
 
 ## 5. Pricing in INR (proposal, from pricing-packaging.md §4)
 
+> **Update 2026-11-18:** [pricing-packaging-v2.md](pricing-packaging-v2.md) keeps these prices but proposes 15 h / 30 h
+> pooled hours, a ₹499 pack, a per-org free tier and 12 / 7 users per mandate charge once GST is added (v2 §1, §4).
+
 | Tier (proposal) | INR per recording user / month (annual / monthly) | Included capture | Notes                                                                                   |
 | --------------- | ------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------- |
 | Free            | ₹0                                                | 5 h              | Consent receipts and one integration with approval                                      |
