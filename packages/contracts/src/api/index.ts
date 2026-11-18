@@ -1,4 +1,5 @@
 export * from './auth.js';
+export * from './mfa.js';
 export * from './errors.js';
 export * from './pagination.js';
 export * from './consent.js';

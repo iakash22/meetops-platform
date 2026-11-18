@@ -257,6 +257,11 @@ export function googleAuthRoutes(app: FastifyInstance, opts: GoogleAuthOptions) 
           );
           return fail(reply, 'google_link_password', next);
         }
+        if (outcome.kind === 'mfa_challenge') {
+          // ADR-021 OQ-17: Google proved the first factor; the web app finds MFA_REQUIRED and shows the challenge.
+          g.setMfaChallengeCookie(reply, outcome.challenge);
+          return sendApp(reply, next);
+        }
         if (outcome.kind !== 'session') return fail(reply, 'google', next);
         if (outcome.verifyLink) {
           reply.setCookie(

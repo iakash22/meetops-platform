@@ -34,6 +34,14 @@ import {
 } from './auth/application/google-oidc.js';
 import type { GoogleOAuthClient } from './auth/application/google-oauth.js';
 import { authRoutes } from './auth/http/auth.plugin.js';
+import {
+  MfaService,
+  devMfaSecretCipher,
+  mfaRoutes,
+  selectMfaRepository,
+  type MfaSecretCipher,
+} from './mfa/index.js';
+import type { MfaRepository } from './mfa/domain/mfa.repository.js';
 import { randomBytes } from 'node:crypto';
 import {
   assertProductionCookies,
@@ -266,6 +274,14 @@ export interface ModuleDeps {
   consentEnforcementEnabled?: boolean;
   /** Set when defaultModuleDeps built the storage-backed media adapters (BullMQ producer closed in onClose). */
   ownedMedia?: { close(): Promise<void> };
+  /** ADR-021 MFA factor store (Prisma when `db` is set; in-memory otherwise, dev/test only). */
+  mfa?: MfaRepository;
+  /**
+   * ADR-021 D5 / P-3: TokenCipher (ADR-016 KMS) adapted with mfaCipherFrom(). Dev/test get a random-key cipher. Outside
+   * development/test, without one the /auth/mfa* routes are not registered (MFA cannot be enabled), while the
+   * MFA_REQUIRED session gate stays on.
+   */
+  mfaSecretCipher?: MfaSecretCipher;
 }
 
 /** Ports the media module needs. */
@@ -923,6 +939,23 @@ export async function registerModules(app: FastifyInstance, deps: ModuleDeps) {
     webBaseUrl: deps.webBaseUrl,
     google: deps.googleOAuth ?? null,
   });
+  // ADR-021 MFA routes (TOTP + recovery codes, OQ-17 login challenge).
+  const mfaCipher =
+    deps.mfaSecretCipher ?? (isRelaxedEnv(process.env.NODE_ENV) ? devMfaSecretCipher() : undefined);
+  if (mfaCipher) {
+    const mfa = new MfaService({
+      ...deps,
+      mfa: selectMfaRepository(deps),
+      cipher: mfaCipher,
+      auth,
+    });
+    await app.register(mfaRoutes, { auth, mfa, security: deps.security });
+  } else {
+    app.log.warn(
+      { event: 'mfa.disabled' },
+      'MFA routes off: no mfaSecretCipher (ADR-016 KMS) configured',
+    );
+  }
   await app.register(organizationRoutes, {
     auth,
     organizations,

@@ -31,6 +31,7 @@ import type {
   TokenService,
 } from '../domain/ports.js';
 import { sequentialAccountClaims } from './account-claims.js';
+import { credentialsFingerprint, newMfaChallenge, type MfaChallenge } from './mfa-challenge.js';
 import type {
   TakeoverFollowUpJob,
   TakeoverFollowUpKind,
@@ -38,7 +39,9 @@ import type {
   TakeoverFollowUpRunner,
 } from '../domain/takeover-follow-up.js';
 import {
+  hasFreshStepUp,
   isSessionActive,
+  MFA_SESSION_LEVEL,
   type Session,
   type SessionAuthLevel,
   type SessionPolicy,
@@ -47,6 +50,7 @@ import {
 import {
   InvalidCredentialsError,
   RateLimitedError,
+  StepUpRequiredError,
   UnauthenticatedError,
   CredentialStoreUnavailableError,
 } from '../domain/errors.js';
@@ -139,6 +143,11 @@ export interface SessionResult {
   session: Session;
   /** Raw token, returned once for the cookie. Never log it. */
   token: string;
+  /**
+   * ADR-021: the user has an active MFA factor (`users.mfa_enabled_at`). With a non-`mfa` session the response is
+   * reduced to `mfaRequired: true` and every other route answers MFA_REQUIRED until the challenge passes.
+   */
+  mfaEnabled?: boolean;
 }
 
 export type GoogleSignInOutcome =
@@ -154,7 +163,15 @@ export type GoogleSignInOutcome =
    * that account (its password): the caller remembers `{ userId, sub }` for a short while and passes it to login().
    */
   | { kind: 'link_required'; pending: PendingGoogleLink }
+  /** ADR-021 OQ-17: the Google first factor passed for a user with MFA; no session until the challenge passes. */
+  | { kind: 'mfa_challenge'; challenge: MfaChallenge }
   | { kind: 'rejected' };
+
+/** ADR-021 OQ-17: login() result for a user with MFA: a challenge, never a session. */
+export interface MfaChallengeResult {
+  mfaChallenge: MfaChallenge;
+  user: PublicUser;
+}
 
 /** A Google subject waiting to be linked once the account's own password is entered (login()). */
 type AccountCredentials = NonNullable<Awaited<ReturnType<UserRepository['readCredentials']>>>;
@@ -343,7 +360,7 @@ export class AuthService implements TakeoverFollowUpRunner {
     meta: RequestMeta,
     currentToken?: string,
     pendingGoogleLink?: PendingGoogleLink | null,
-  ): Promise<SessionResult> {
+  ): Promise<SessionResult | MfaChallengeResult> {
     const email = normalizeEmail(input.email);
     await this.limit(`login:ip:${clientIpKey(meta.ip)}`, AUTH_LIMITS.loginPerIp);
     const lock = await this.d.lockout.isLocked(email);
@@ -378,6 +395,24 @@ export class AuthService implements TakeoverFollowUpRunner {
       }
       if (delayMs) await (this.d.sleep ?? realSleep)(delayMs);
       throw new InvalidCredentialsError();
+    }
+    if (user.mfaEnabledAt) {
+      // ADR-021 OQ-17: correct password, but no session yet. OQ-4: the lockout counter is NOT reset here (only a
+      // passed MFA challenge resets it), so a known password does not buy fresh MFA guesses. Any presented session is
+      // still signed out, and a parked Google link waits (MFA-OIDC-06: linking needs the account's MFA too).
+      if (currentToken) {
+        const old = await this.revokeByToken(currentToken);
+        if (old) await this.publishSessionRevoked(old, 'logout');
+      }
+      return {
+        mfaChallenge: newMfaChallenge(
+          user.id,
+          'password',
+          credentialsFingerprint({ ...user, passwordHash: checkedHash }),
+          this.d.clock.now(),
+        ),
+        user: toPublicUser(user),
+      };
     }
     await this.d.lockout.reset(email);
     let verifiedHash = checkedHash;
@@ -772,6 +807,20 @@ export class AuthService implements TakeoverFollowUpRunner {
       const old = await this.revokeByToken(currentToken);
       if (old) await this.publishSessionRevoked(old, 'logout');
     }
+    if (user.mfaEnabledAt) {
+      // ADR-021 OQ-17 / OQ-3: Google is a first factor only (its amr is never trusted); MFA users get a challenge.
+      const c = await this.d.users.readCredentials(user.id);
+      if (!c || !holds(c)) return { kind: 'rejected' };
+      return {
+        kind: 'mfa_challenge',
+        challenge: newMfaChallenge(
+          user.id,
+          'google',
+          credentialsFingerprint(c),
+          this.d.clock.now(),
+        ),
+      };
+    }
     const result = await this.issueSession(
       user.id,
       toPublicUser(user),
@@ -1110,7 +1159,7 @@ export class AuthService implements TakeoverFollowUpRunner {
   async authenticate(
     token: string | undefined,
     meta?: RequestMeta,
-  ): Promise<{ user: PublicUser; session: Session }> {
+  ): Promise<{ user: PublicUser; session: Session; mfaEnabled: boolean }> {
     if (!token) throw new UnauthenticatedError();
     const session = await this.d.sessions.findByTokenHash(this.d.tokens.hash(token));
     const now = this.d.clock.now();
@@ -1126,9 +1175,128 @@ export class AuthService implements TakeoverFollowUpRunner {
       return {
         user: toPublicUser(user),
         session: { ...session, lastSeenAt: now, ip: meta.ip, geo },
+        mfaEnabled: !!user.mfaEnabledAt,
       };
     }
-    return { user: toPublicUser(user), session: { ...session, lastSeenAt: now } };
+    return {
+      user: toPublicUser(user),
+      session: { ...session, lastSeenAt: now },
+      mfaEnabled: !!user.mfaEnabledAt,
+    };
+  }
+
+  /**
+   * ADR-021: the session just proved a second factor (MFA challenge, step-up, or TOTP confirm). Like rotate(): the old
+   * session is revoked (realtime told), a new id is issued with level `mfa`, and the credentials are re-checked (X4).
+   * The new session keeps the ORIGINAL absolute expiry (OQ-7: elevation never extends the sign-in) and its active
+   * organization. `stepUp: true` stamps `mfaAt` (step-up freshness, D4); a TOTP confirm elevates without it, so the
+   * first sensitive action after enrolment still asks for a step-up.
+   */
+  async elevate(
+    session: Session,
+    user: PublicUser,
+    meta: RequestMeta,
+    opts: { stepUp: boolean },
+  ): Promise<SessionResult> {
+    const before = await this.d.users.readCredentials(session.userId);
+    if (!before) throw new UnauthenticatedError();
+    if (!(await this.d.sessions.revoke(session.id, this.d.clock.now())))
+      throw new UnauthenticatedError();
+    await this.publishSessionRevoked(session, 'logout');
+    const now = this.d.clock.now();
+    const r = await this.issueSession(session.userId, user, session.activeOrganizationId, meta, {
+      elevated: true,
+      expiresAt: session.expiresAt,
+      ...(opts.stepUp ? { mfaAt: now } : {}),
+    });
+    const same = (c: AccountCredentials) =>
+      c.passwordHash === before.passwordHash &&
+      c.googleSub === before.googleSub &&
+      c.emailVerifiedAt?.getTime() === before.emailVerifiedAt?.getTime();
+    if (!(await this.stillHolds(r.session, meta, same))) throw new UnauthenticatedError();
+    r.mfaEnabled = true;
+    return r;
+  }
+
+  /**
+   * ADR-021 OQ-17: the second factor of `challenge` was verified (by MfaService). Issues the real session at level
+   * `mfa` with a fresh step-up (`mfaAt`, OQ-1: "10 minutes since the last MFA"), resets the shared lockout (OQ-4) and
+   * audits the sign-in. The challenge dies if the credentials changed since the first factor (cv), and the new session
+   * is re-checked against them like every sign-in (X4).
+   */
+  async completeMfaChallenge(
+    challenge: MfaChallenge,
+    meta: RequestMeta,
+    currentToken?: string,
+  ): Promise<SessionResult> {
+    const c = await this.d.users.readCredentials(challenge.userId);
+    const user = await this.d.users.findById(challenge.userId);
+    if (
+      !c ||
+      !user ||
+      !user.mfaEnabledAt ||
+      credentialsFingerprint(c) !== challenge.credentialsFingerprint
+    )
+      throw new UnauthenticatedError();
+    if (currentToken) {
+      const old = await this.revokeByToken(currentToken);
+      if (old) await this.publishSessionRevoked(old, 'logout');
+    }
+    const r = await this.issueSession(
+      user.id,
+      toPublicUser(user),
+      await this.defaultOrganizationId(user.id),
+      meta,
+      { newLocationAlert: true, elevated: true, mfaAt: this.d.clock.now() },
+    );
+    if (
+      !(await this.stillHolds(
+        r.session,
+        meta,
+        (now) => credentialsFingerprint(now) === challenge.credentialsFingerprint,
+      ))
+    )
+      throw new UnauthenticatedError();
+    await this.d.lockout.reset(normalizeEmail(user.email));
+    await this.audit(
+      {
+        actorId: user.id,
+        action: 'auth.login.success',
+        targetType: 'session',
+        targetId: r.session.id,
+        metadata: {
+          mfa: true,
+          ...(challenge.firstFactor === 'google' ? { provider: 'google' } : {}),
+        },
+      },
+      meta,
+    );
+    r.mfaEnabled = true;
+    return r;
+  }
+
+  /**
+   * ADR-021: MFA turned on or off for the user. Every other session is revoked (realtime told) and, when disabling,
+   * extension/desktop token families too, so nothing minted under the old assurance survives.
+   */
+  /**
+   * ADR-021 Decision 4 (+ OQ-9 / OQ-10): a sensitive action by a user with MFA needs a step-up in the last 10 minutes
+   * (OQ-1) on this session. Users without MFA are not asked (they have nothing to step up with; org policy and forced
+   * enrolment, OQ-5 / OQ-13, are enforced separately). Call it right after requireSession, before any lookup, so the
+   * answer does not depend on whether the target exists.
+   */
+  requireStepUp(ctx: { session: Session; mfaEnabled?: boolean } | null | undefined): void {
+    if (!ctx) throw new UnauthenticatedError();
+    if (ctx.mfaEnabled && !hasFreshStepUp(ctx.session, this.d.clock.now()))
+      throw new StepUpRequiredError();
+  }
+
+  async afterMfaChange(userId: string, keepSessionId: string, change: 'enabled' | 'disabled') {
+    await this.revokeOtherSessions(userId, keepSessionId);
+    if (change === 'disabled')
+      await this.d.extensionRevoker?.revokeForUser(userId, 'password_changed', undefined, {
+        propagate: true,
+      });
   }
 
   /**
@@ -1153,9 +1321,18 @@ export class AuthService implements TakeoverFollowUpRunner {
       throw new UnauthenticatedError();
     }
     await this.publishSessionRevoked(session, reason);
-    const r = await this.issueSession(session.userId, user, activeOrganizationId, meta, {
-      authLevel: session.authLevel ?? 'password',
-    });
+    // ADR-021 (SU-07 interpretation): an mfa session stays mfa across org switch / role change, but its step-up
+    // freshness (mfaAt) is NOT carried over, so the next sensitive action asks for a step-up again.
+    const level = session.authLevel ?? 'password';
+    const r = await this.issueSession(
+      session.userId,
+      user,
+      activeOrganizationId,
+      meta,
+      level === MFA_SESSION_LEVEL
+        ? { elevated: true }
+        : { authLevel: level as Exclude<SessionAuthLevel, 'mfa'> },
+    );
     const same = (c: AccountCredentials) =>
       c.passwordHash === before.passwordHash &&
       c.googleSub === before.googleSub &&
@@ -1230,7 +1407,15 @@ export class AuthService implements TakeoverFollowUpRunner {
     user: PublicUser,
     activeOrganizationId: string | null,
     meta: RequestMeta,
-    opts: { newLocationAlert?: boolean; authLevel?: SessionAuthLevel } = {},
+    opts: {
+      newLocationAlert?: boolean;
+      authLevel?: Exclude<SessionAuthLevel, 'mfa'>;
+      /** ADR-021: only elevate() sets this; the level then comes from the domain (MFA_SESSION_LEVEL). */
+      elevated?: boolean;
+      /** ADR-021 OQ-7: keep the original absolute expiry on elevation. */
+      expiresAt?: Date;
+      mfaAt?: Date;
+    } = {},
   ): Promise<SessionResult> {
     const token = this.d.tokens.generate();
     const now = this.d.clock.now();
@@ -1242,12 +1427,13 @@ export class AuthService implements TakeoverFollowUpRunner {
       activeOrganizationId,
       createdAt: now,
       lastSeenAt: now,
-      expiresAt: new Date(now.getTime() + this.d.sessionPolicy.absoluteTimeoutMs),
+      expiresAt: opts.expiresAt ?? new Date(now.getTime() + this.d.sessionPolicy.absoluteTimeoutMs),
       revokedAt: null,
       ip: meta.ip,
       userAgent: meta.userAgent,
       geo,
-      authLevel: opts.authLevel ?? 'password',
+      authLevel: opts.elevated ? MFA_SESSION_LEVEL : (opts.authLevel ?? 'password'),
+      ...(opts.elevated && opts.mfaAt ? { mfaAt: opts.mfaAt } : {}),
     };
     const event = opts.newLocationAlert
       ? await this.newLocationEvent(userId, draft, activeOrganizationId)

@@ -2,8 +2,20 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AuthService, RequestMeta, SessionResult } from '../application/auth.service.js';
 import type { PublicUser } from '../../users/domain/user.js';
-import type { Session, SessionPolicy } from '../domain/session.js';
-import { CsrfError, OriginForbiddenError } from '../domain/errors.js';
+import { isMfaSession, type Session, type SessionPolicy } from '../domain/session.js';
+import {
+  CsrfError,
+  MfaRequiredError,
+  OriginForbiddenError,
+  UnauthenticatedError,
+} from '../domain/errors.js';
+import { deriveOAuthStateKey } from '../application/google-oidc.js';
+import {
+  MFA_CHALLENGE_TTL_MS,
+  openMfaChallenge,
+  sealMfaChallenge,
+  type MfaChallenge,
+} from '../application/mfa-challenge.js';
 
 /** R13: lifetime of the `__Host-meetops_presession` cookie. */
 export const PRE_SESSION_MAX_AGE_S = 3600;
@@ -11,6 +23,20 @@ export const PRE_SESSION_MAX_AGE_S = 3600;
 export interface AuthContext {
   user: PublicUser;
   session: Session;
+  /** ADR-021: the user has an active MFA factor. Optional so older fakes/contexts keep compiling (absent = off). */
+  mfaEnabled?: boolean;
+}
+
+/** ADR-021 D2: MFA is on for the user but this session has not passed the challenge (any level but exactly `mfa`). */
+export const mfaPending = (ctx: Pick<AuthContext, 'session' | 'mfaEnabled'>): boolean =>
+  ctx.mfaEnabled === true && !isMfaSession(ctx.session);
+
+export interface RequireSessionOptions {
+  /**
+   * ADR-021: let an MFA-pending session through. Only for logout, GET /auth/session (reduced body), GET /auth/mfa and
+   * POST /auth/mfa/challenge. Every other route gets 403 MFA_REQUIRED.
+   */
+  allowMfaPending?: boolean;
 }
 
 declare module 'fastify' {
@@ -118,8 +144,36 @@ export function verifyCsrf(secret: Buffer, binding: string, token: string) {
   return !!nonce && safeEqual(signCsrf(secret, binding, nonce), token);
 }
 
+/**
+ * ADR-021 OQ-17: the MFA challenge cookie (`__Host-meetops_mfa` in production). HttpOnly, SameSite=Strict, its own
+ * HKDF key, 5 minutes. Not a session cookie: only POST /auth/mfa/challenge and logout read it.
+ */
+export function mfaChallengeCookie(cfg: HttpSecurityConfig) {
+  return {
+    name: cfg.cookieName.replace(/meetops_sid$/, 'meetops_mfa'),
+    key: deriveOAuthStateKey(cfg.csrfSecret, 'mfa-challenge'),
+    maxAgeS: Math.floor(MFA_CHALLENGE_TTL_MS / 1000),
+    attributes: {
+      secure: cfg.cookieSecure,
+      sameSite: 'strict' as const,
+      path: '/',
+      httpOnly: true,
+    },
+  };
+}
+
 export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
   const readToken = (r: FastifyRequest) => r.cookies[cfg.cookieName];
+  const mfaCookie = mfaChallengeCookie(cfg);
+  const readMfaChallenge = (r: FastifyRequest): MfaChallenge | null =>
+    openMfaChallenge(r.cookies[mfaCookie.name], mfaCookie.key, Date.now());
+  const setMfaChallengeCookie = (reply: FastifyReply, c: MfaChallenge) =>
+    reply.setCookie(mfaCookie.name, sealMfaChallenge(c, mfaCookie.key), {
+      ...mfaCookie.attributes,
+      maxAge: mfaCookie.maxAgeS,
+    });
+  const clearMfaChallengeCookie = (reply: FastifyReply) =>
+    reply.clearCookie(mfaCookie.name, mfaCookie.attributes);
 
   /** The CSRF binding for this request: the valid session if any, else the pre-session nonce. */
   const bindingFor = async (request: FastifyRequest): Promise<string | null> => {
@@ -149,9 +203,22 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     if (!binding || !verifyCsrf(cfg.csrfSecret, binding, header)) throw new CsrfError();
   };
 
-  const requireSession = async (request: FastifyRequest): Promise<AuthContext> => {
-    const ctx = await auth.authenticate(readToken(request), requestMeta(request));
+  const requireSession = async (
+    request: FastifyRequest,
+    opts: RequireSessionOptions = {},
+  ): Promise<AuthContext> => {
+    let ctx: AuthContext;
+    try {
+      ctx = await auth.authenticate(readToken(request), requestMeta(request));
+    } catch (e) {
+      // OQ-17: no session, but a live MFA challenge: say what is missing instead of a bare 401. The challenge itself
+      // never authenticates anything.
+      if (e instanceof UnauthenticatedError && readMfaChallenge(request))
+        throw new MfaRequiredError();
+      throw e;
+    }
     request.auth = ctx;
+    if (!opts.allowMfaPending && mfaPending(ctx)) throw new MfaRequiredError();
     return ctx;
   };
 
@@ -178,6 +245,7 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
     reply.clearCookie(cfg.cookieName, { ...baseCookie, httpOnly: true });
     reply.clearCookie(cfg.csrfCookieName, { ...baseCookie, sameSite: 'strict', httpOnly: false });
     reply.clearCookie(cfg.preSessionCookieName, preSessionCookie);
+    reply.clearCookie(mfaCookie.name, mfaCookie.attributes);
     return reply;
   };
 
@@ -208,6 +276,9 @@ export function makeGuards(auth: AuthService, cfg: HttpSecurityConfig) {
 
   return {
     readToken,
+    readMfaChallenge,
+    setMfaChallengeCookie,
+    clearMfaChallengeCookie,
     requireSession,
     setSessionCookie,
     clearSessionCookie,

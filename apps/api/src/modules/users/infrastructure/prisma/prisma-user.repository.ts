@@ -14,6 +14,7 @@ type Row = {
   passwordHash: string | null;
   emailVerified: Date | null;
   googleSub: string | null;
+  mfaEnabledAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -26,6 +27,7 @@ const toUser = (r: Row): User => ({
   passwordHash: r.passwordHash ?? '',
   emailVerifiedAt: r.emailVerified,
   googleSub: r.googleSub,
+  mfaEnabledAt: r.mfaEnabledAt ?? null,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
   deletedAt: r.deletedAt,
