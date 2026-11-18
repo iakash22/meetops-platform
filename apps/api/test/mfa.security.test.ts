@@ -77,7 +77,7 @@ const PLANNED = {
     stepUp: 'auth.mfa.step_up',
     recoveryUsed: 'auth.mfa.recovery_code.used',
     recoveryRegenerated: 'auth.mfa.recovery_codes.regenerate',
-    lockout: 'auth.mfa.lockout',
+    lockout: 'mfa.lockout',
   },
 } as const;
 
@@ -94,6 +94,12 @@ const STEP_UP_ROUTES = [
 /** Contracted (CONSENT_UPLOAD_PATHS.consentSettings) but not served by the API yet; billing (ADR-017) has no route. */
 const STEP_UP_NOT_BUILT = [
   { category: 'retention', method: 'PATCH', url: '/orgs/:organizationId/settings/consent' },
+] as const;
+
+/** API source files allowed to reference the elevated session level (grows only with reviewed MFA code). */
+const MFA_LEVEL_ALLOWLIST = [
+  'modules/auth/domain/session.ts',
+  'modules/auth/infrastructure/prisma/prisma-session.repository.ts',
 ] as const;
 
 /* ---------------------------------------------- RFC 6238 helpers ---------------------------------------------- */
@@ -214,7 +220,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     expect(sql).toMatch(/"auth_level" TEXT NOT NULL DEFAULT 'password'/);
   });
 
-  it('MFA-SES-02: the Prisma session repository never writes authLevel "mfa": a session without a level is stored as "password"', async () => {
+  it('MFA-SES-02: the Prisma session repository writes "password" for a session without a level, and mfaAt only on an "mfa" session', async () => {
     const writes: Record<string, unknown>[] = [];
     const fakeDb = {
       session: {
@@ -234,7 +240,7 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
     } as unknown as DatabaseClient;
     const repo = new PrismaSessionRepository(fakeDb);
     const now = new Date('2026-11-09T00:00:00.000Z');
-    await repo.create({
+    const base: Session = {
       id: '00000000-0000-4000-8000-000000000001',
       userId: '00000000-0000-4000-8000-000000000002',
       tokenHash: 'h',
@@ -245,14 +251,32 @@ describe('ADR-021 baseline: session auth_level (active)', () => {
       revokedAt: null,
       ip: null,
       userAgent: null,
-    });
+    };
+    await repo.create(base);
     expect(writes).toHaveLength(1);
-    // N-4 (OIDC hardening) made the level explicit ("password" | "google"); what must never be written is "mfa".
+    // N-4 (OIDC hardening) made the level explicit; a session without one is never elevated.
     expect(writes[0]!.authLevel).toBe(PLANNED.levels.password);
-    expect(writes[0]!.authLevel).not.toBe(PLANNED.levels.mfa);
-    // Reading back an unknown level (e.g. "mfa" before MFA ships) is not trusted: it maps to "password".
-    expect(toSessionAuthLevel(PLANNED.levels.mfa)).toBe(PLANNED.levels.password);
-    expect(SESSION_AUTH_LEVELS).not.toContain(PLANNED.levels.mfa);
+    expect(writes[0]!.mfaAt).toBeNull();
+    // ADR-021: a step-up time without the mfa level is dropped (the DB CHECK sessions_mfa_at_level_check agrees).
+    const stray = await repo.create({
+      ...base,
+      id: '00000000-0000-4000-8000-000000000003',
+      mfaAt: now,
+    });
+    expect(writes[1]!.mfaAt).toBeNull();
+    expect(stray.mfaAt).toBeNull();
+    const elevated = await repo.create({
+      ...base,
+      id: '00000000-0000-4000-8000-000000000004',
+      authLevel: PLANNED.levels.mfa,
+      mfaAt: now,
+    });
+    expect(writes[2]!.authLevel).toBe(PLANNED.levels.mfa);
+    expect(elevated.mfaAt?.getTime()).toBe(now.getTime());
+    // Unknown stored levels are not trusted; "mfa" is now a real level.
+    expect(toSessionAuthLevel('superuser')).toBe(PLANNED.levels.password);
+    expect(toSessionAuthLevel(PLANNED.levels.mfa)).toBe(PLANNED.levels.mfa);
+    expect(SESSION_AUTH_LEVELS).toContain(PLANNED.levels.mfa);
   });
 
   it('MFA-SES-03: a password login does not create an elevated session', async () => {
@@ -365,15 +389,19 @@ describe('ADR-021 not built yet (active pins: when one fails, un-skip the TODO(A
     await app.close();
   });
 
-  it('no API source sets a session authLevel to "mfa" (nothing can elevate a session today)', () => {
-    // N-4 legitimately writes "password" / "google"; the pin is on the elevated value only.
+  it('only the allowlisted MFA files reference the "mfa" session level (nothing else can elevate a session)', () => {
+    // N-4 legitimately writes "password" / "google". ADR-021 piece (a) adds the level to the domain and its storage
+    // mapping only; later pieces add the elevation path (AuthService.elevate) and the gates to this list, nothing else.
     const setsMfa =
       /(?:authLevel|auth_level)['"]?\s*(?:[:=]|===?|!==?)\s*['"`]mfa['"`]|['"`]mfa['"`]\s*(?:===?|!==?)\s*\w*[aA]uth_?[lL]evel|SESSION_AUTH_LEVELS\s*=\s*\[[^\]]*['"`]mfa['"`]/;
     for (const sample of ["authLevel: 'mfa'", 'session.authLevel = "mfa"', "auth_level === 'mfa'"])
       expect(setsMfa.test(sample), sample).toBe(true);
     expect(setsMfa.test("authLevel: 'google'")).toBe(false);
-    const offenders = walk(API_SRC).filter((f) => setsMfa.test(readFileSync(f, 'utf8')));
-    expect(offenders).toEqual([]);
+    const offenders = walk(API_SRC)
+      .filter((f) => setsMfa.test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(API_SRC.length + 1).replaceAll('\\', '/'))
+      .sort();
+    expect(offenders).toEqual([...MFA_LEVEL_ALLOWLIST].sort());
   });
 });
 
@@ -407,15 +435,15 @@ describe('ADR-021 baseline: TOTP material in logs (active)', () => {
  * PART 2 — PENDING, TODO(ADR-021). Proposed interface: PLANNED above.
  * ============================================================================================================== */
 
-describe('TODO(ADR-021) log redaction gaps before MFA ships (blocked by P-1 / P-4)', () => {
+describe('ADR-021 log redaction of MFA fields (P-1 / P-4 fixed in @meetops/logger)', () => {
   // P-1: CONDITIONAL_REDACT_KEYS treats a `code` that looks like /^\d{1,6}$/ as an error code and keeps it.
-  it.skip('MFA-SEC-05 (P-1): a 6-digit TOTP sent as `code` is redacted', () => {
+  it('MFA-SEC-05 (P-1): a 6-digit TOTP sent as `code` is redacted', () => {
     expect(
       JSON.stringify(redactDeep({ body: { code: '492039' } }, DEFAULT_REDACT_KEYS)),
     ).not.toContain('492039');
   });
   // P-4: DEFAULT_REDACT_KEYS has no MFA field names.
-  it.skip('MFA-SEC-06 (P-4): MFA field names are always redacted', () => {
+  it('MFA-SEC-06 (P-4): MFA field names are always redacted', () => {
     const body = {
       totpCode: '492039',
       recoveryCode: 'abcd-efgh-ijkl',
@@ -529,6 +557,11 @@ describe.skip('TODO(ADR-021) enrollment (MFA-ENR)', () => {
   });
 });
 
+/**
+ * ADR-021 OQ-17 (review #497): login of an MFA user returns `{ mfaRequired: true, challengeToken, expiresAt }` and NO
+ * session cookie; POST /auth/mfa/challenge exchanges `challengeToken` + a code for a new `mfa` session. The cases below
+ * MFA-TOTP-02 still post a bare code; the challenge PR (#490) adds `challengeToken` to them when it activates this block.
+ */
 describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
   async function mfaUser(app: App, email: string) {
     const c = await signupAndLogin(app, email);
@@ -536,36 +569,41 @@ describe.skip('TODO(ADR-021) TOTP verification (MFA-TOTP)', () => {
     await c.post('/auth/logout');
     const fresh = new Client(app);
     const login = await fresh.post('/auth/login', { email, password: PASSWORD });
-    return { c: fresh, login, ...f };
+    const challengeToken = login.json<{ challengeToken?: string }>().challengeToken ?? '';
+    return { c: fresh, login, challengeToken, ...f };
   }
 
-  it('MFA-TOTP-01: password login of an MFA user is not elevated and cannot reach org data until the challenge', async () => {
+  it('MFA-TOTP-01: password login of an MFA user returns a challenge, not a session: no cookie, no org data', async () => {
     const app = await buildApp();
     const { c, login } = await mfaUser(app, 'totp1@example.com');
     expect(login.statusCode).toBe(200);
-    expect(login.json<{ mfaRequired?: boolean }>().mfaRequired).toBe(true);
-    const orgs = await c.get('/orgs');
-    expect(orgs.statusCode).toBe(403);
-    expect(errCode(orgs)).toBe(PLANNED.errors.mfaRequired);
+    const body = login.json<Record<string, unknown>>();
+    expect(body.mfaRequired).toBe(true);
+    expect(typeof body.challengeToken).toBe('string');
+    expect(Object.keys(body).sort()).toEqual(['challengeToken', 'expiresAt', 'mfaRequired']);
+    expect(String(login.headers['set-cookie'] ?? '')).not.toContain(`${SID}=`);
+    expect((await c.get('/auth/session')).statusCode).toBe(401);
+    expect((await c.get('/orgs')).statusCode).toBe(401);
     await app.close();
   });
 
-  it('MFA-TOTP-02: a valid code elevates to auth_level=mfa and rotates the session id', async () => {
+  it('MFA-TOTP-02: challengeToken + a valid code creates the session at auth_level=mfa; the token is single use', async () => {
     const app = await buildApp();
-    const { c, secret } = await mfaUser(app, 'totp2@example.com');
-    const before = sidOf(c);
+    const { c, secret, challengeToken } = await mfaUser(app, 'totp2@example.com');
+    expect(sidOf(c)).toBeFalsy();
     const ok = await c.post(PLANNED.paths.challenge, {
+      challengeToken,
       [PLANNED.totpField]: totp(secret, Date.now()),
     });
     expect(ok.statusCode).toBe(200);
-    expect(sidOf(c)).not.toBe(before);
+    expect(sidOf(c)).toBeTruthy();
     expect(await sessionLevel(c)).toBe(PLANNED.levels.mfa);
-    const stale = await app.inject({
-      method: 'GET',
-      url: '/auth/session',
-      headers: { cookie: `${SID}=${before}` },
+    const again = await new Client(app).post(PLANNED.paths.challenge, {
+      challengeToken,
+      [PLANNED.totpField]: totp(secret, Date.now() + 30_000),
     });
-    expect(stale.statusCode).toBe(401);
+    expect(again.statusCode).toBe(400);
+    expect(errCode(again)).toBe(PLANNED.errors.invalidCode);
     await app.close();
   });
 

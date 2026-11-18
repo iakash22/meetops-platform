@@ -61,7 +61,19 @@ export type AuditAction =
   | 'calendar.connect'
   | 'calendar.disconnect'
   | 'calendar.link'
-  | 'calendar.unlink';
+  | 'calendar.unlink'
+  // ADR-021 Amendment 1 P-5: MFA events. Pre-tenant (organizationId null), written through record_global_auth_event.
+  // The types land with the schema (#497); the routes that emit them come with the enrolment / challenge PRs.
+  | 'auth.mfa.enroll'
+  | 'auth.mfa.confirm'
+  | 'auth.mfa.disable'
+  | 'auth.mfa.challenge.success'
+  | 'auth.mfa.challenge.failure'
+  | 'auth.mfa.step_up'
+  | 'auth.mfa.recovery_code.used'
+  | 'auth.mfa.recovery_codes.regenerate'
+  /** OQ-4: the shared ADR-006 lockout tripped on MFA failures (distinct from a password lockout, `auth.lockout`). */
+  | 'mfa.lockout';
 
 /** Never put passwords, tokens, cookies or hashes in metadata. */
 export interface AuditEvent {
@@ -85,7 +97,9 @@ export interface AuditEvent {
     | 'extension_device'
     | 'desktop_device'
     | 'integration'
-    | 'calendar_connection';
+    | 'calendar_connection'
+    /** ADR-021: MFA events target the factor (id only; never the secret or a code). */
+    | 'mfa_factor';
   targetId: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ip: string | null;

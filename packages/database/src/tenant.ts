@@ -59,6 +59,13 @@ export const TENANT_TABLES = [
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
+/**
+ * ADR-021: user-scoped tables (no org_id) with forced RLS keyed on USER_CONTEXT_SETTING. Read and written only inside
+ * runWithUserContext(userId, ...); without the setting they return no rows (fail closed).
+ */
+export const USER_TABLES = ['mfa_factors', 'mfa_recovery_codes'] as const;
+export type UserTable = (typeof USER_TABLES)[number];
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function assertUuid(value: string, label = 'organizationId'): void {

@@ -24,6 +24,7 @@ type Row = {
   geoCountryCode: string | null;
   geoApproximate: boolean | null;
   authLevel: string;
+  mfaAt?: Date | null;
 };
 const toSession = (r: Row): Session => ({
   id: r.id,
@@ -44,6 +45,8 @@ const toSession = (r: Row): Session => ({
     geoApproximate: r.geoApproximate ? true : null,
   },
   authLevel: toSessionAuthLevel(r.authLevel),
+  // ADR-021: freshness only counts on an `mfa` row (the DB CHECK enforces the same; never trust a stray value).
+  mfaAt: toSessionAuthLevel(r.authLevel) === 'mfa' ? (r.mfaAt ?? null) : null,
 });
 const geoData = (g: GeoFields | undefined) => ({
   geoCity: g?.geoCity ?? null,
@@ -79,6 +82,7 @@ export class PrismaSessionRepository implements SessionRepository {
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,
       authLevel: s.authLevel ?? 'password',
+      mfaAt: s.authLevel === 'mfa' ? (s.mfaAt ?? null) : null,
     };
   }
   async knownLocations(userId: string) {

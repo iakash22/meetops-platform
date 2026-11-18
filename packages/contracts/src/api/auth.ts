@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Id, IsoDateTime } from '../common.js';
 import { Membership, Organization, Role, User } from '../domain/org.js';
+import { AuthSessionInfo, MfaLoginChallenge } from './mfa.js';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_PATTERN } from '../password-policy.js';
 
 const Email = Type.String({ format: 'email', maxLength: 320 });
@@ -42,6 +43,8 @@ export type ForgotPasswordRequest = Static<typeof ForgotPasswordRequest>;
  * `__Host-` prefixed, HttpOnly, Secure, SameSite cookie set by the API.
  * Clients send `csrfToken` back in the `x-csrf-token` header on state-changing requests.
  * `activeOrganizationId` and `role` are set by the server from the membership, never by the client. Both are null when the user has no organization membership yet (both null or both set).
+ * ADR-021 OQ-17: an AuthSession only ever describes a real session. A user with MFA on does not get one from login;
+ * login returns `MfaLoginChallenge` instead, and the session is created by POST /auth/mfa/challenge.
  */
 export const AuthSession = Type.Object({
   user: User,
@@ -51,8 +54,21 @@ export const AuthSession = Type.Object({
   expiresAt: Type.Optional(IsoDateTime),
   organizations: Type.Array(Organization),
   memberships: Type.Optional(Type.Array(Membership)),
+  /** Unreleased (ADR-021): assurance level of the current session. */
+  session: Type.Optional(AuthSessionInfo),
 });
 export type AuthSession = Static<typeof AuthSession>;
+
+/**
+ * Unreleased (ADR-021 OQ-17): POST /auth/login (and the Google callback's JSON form) answers either with a session or,
+ * for a user with MFA on, with a challenge that is not a session. Discriminate on `mfaRequired === true`.
+ */
+export const LoginResponse = Type.Union([AuthSession, MfaLoginChallenge]);
+export type LoginResponse = Static<typeof LoginResponse>;
+
+/** Unreleased (ADR-021 OQ-17): POST /auth/mfa/challenge success. The session is created here, at level `mfa`. */
+export const MfaChallengeResponse = AuthSession;
+export type MfaChallengeResponse = AuthSession;
 
 /** GET /auth/session: the current session without any token material. */
 export const GetAuthSessionResponse = Type.Omit(AuthSession, ['csrfToken']);

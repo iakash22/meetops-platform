@@ -8,6 +8,11 @@ export interface User {
   emailVerifiedAt: Date | null;
   /** Google OIDC subject. Absent or null for password-only accounts. */
   googleSub?: string | null;
+  /**
+   * ADR-021: set when the user's TOTP factor is active (`users.mfa_enabled_at`), cleared on disable. Drives the
+   * per-request MFA_REQUIRED gate without an extra query. Absent means not enabled (older fakes).
+   */
+  mfaEnabledAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;

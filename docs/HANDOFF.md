@@ -91,6 +91,7 @@ Merged 31 Oct (#305–#317): extension real meeting API + held recordings (#305,
 4. ~~**Extension Info items**~~: addressed by merged #411 (fail-closed Start, durable pending, separate limits) and merged #437 (required Start checks, Start counts unheld pending chunks, server ceiling is contracts `MAX_CHUNK_BYTES` 64 MiB, local chunk/reserve stays 8 MiB).
 5. ~~**Desktop**~~: done in 02561e2efdf4a202d702dc7a87f5eda320c28911 (`chunk_put` takes a raw IPC body with the slot in an `x-meetops-chunk` header, JSON refused; `chunk_get` returns raw bytes; legacy chunk folders migrated).
 6. ~~**Mobile Lows**~~: done in #322 (server meeting id via `meetings/resolve` with `source: 'upload'`; wipe retries and surfaces failed deletes). Follow-up for Arch: a `mobile` `MeetingSource`.
+7. **MFA follow-ups (ADR-021, later tickets)**: (a) a rotation helper that re-wraps MFA secret envelopes (`mfa_factors.secret_enc`, AAD `["meetops.mfa.totp.v1", userId, factorId]`) under a new `secret_key_id` without the plaintext leaving the API process; (b) forced RLS on `organizations` as its own PR, before `MFA_ORG_ENFORCEMENT_ENABLED` can be turned on (until then only the audited admin service path writes `organizations.mfa_required`); (c) a retention sweep for used/expired `mfa_challenges` rows.
 
 ## 7. How to resume (checklist)
 

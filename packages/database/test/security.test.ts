@@ -13,6 +13,7 @@ import {
   runWithOrgContext,
   runWithOrganizationContext,
   type TransactionCapableClient,
+  USER_TABLES,
 } from '../src/tenant.js';
 
 const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -136,7 +137,16 @@ const OUTBOX_DEDUPE_KEY_INDEX_MIGRATION = '20261103200100_outbox_dedupe_key_inde
 const USER_GOOGLE_SUB_MIGRATION = '20261106120000_user_google_sub';
 /** OIDC hardening: users.google_sub unique only over live rows (L-1) + auth.google_linked in the global audit allowlist. */
 const GOOGLE_OIDC_HARDENING_MIGRATION = '20261109120000_google_oidc_hardening';
-const LATEST_MIGRATION = GOOGLE_OIDC_HARDENING_MIGRATION;
+/** ADR-021 MFA: user-global factor tables (forced user RLS), sessions.mfa_at, organizations.mfa_required. */
+const MFA_TOTP_MIGRATION = '20261111180000_mfa_totp';
+/** Review #497: VALIDATE the sessions CHECKs added NOT VALID above, in their own migration. */
+const MFA_VALIDATE_MIGRATION = '20261111180100_mfa_validate_session_checks';
+/**
+ * #484 (consent settings) is a parallel, still-unmerged PR whose migration sorts after ours. The pins below hold
+ * whichever merges first: when it is present it must be the newest and come after the MFA pair.
+ */
+const CONSENT_SETTINGS_MIGRATION = '20261111200000_organization_consent_settings';
+const LATEST_MIGRATION = MFA_VALIDATE_MIGRATION;
 /**
  * Parallel PRs that sort between calendar_events and meeting_embeddings (#334 consent events, #341 calendar links).
  * The order checks below ignore them so they hold whichever merges first; when present they must sort before ours.
@@ -183,7 +193,13 @@ const orderedDirs = () => {
   expect(dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_TOKEN_GENERATION_MIGRATION) + 1,
   );
-  expect(dirs.at(-1)).toBe(LATEST_MIGRATION);
+  if (dirs.includes(CONSENT_SETTINGS_MIGRATION)) {
+    expect(dirs.at(-1)).toBe(CONSENT_SETTINGS_MIGRATION);
+    expect(dirs.indexOf(CONSENT_SETTINGS_MIGRATION)).toBeGreaterThan(
+      dirs.indexOf(MFA_VALIDATE_MIGRATION),
+    );
+  }
+  expect(dirs.filter((d) => d !== CONSENT_SETTINGS_MIGRATION).at(-1)).toBe(LATEST_MIGRATION);
   expect(dirs.indexOf(MEETING_STATUS_DELAYED_MIGRATION)).toBe(
     dirs.indexOf(CALENDAR_AUTO_LINK_MIGRATION) + 1,
   );
@@ -199,6 +215,8 @@ const orderedDirs = () => {
   expect(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION)).toBe(
     dirs.indexOf(USER_GOOGLE_SUB_MIGRATION) + 1,
   );
+  expect(dirs.indexOf(MFA_TOTP_MIGRATION)).toBe(dirs.indexOf(GOOGLE_OIDC_HARDENING_MIGRATION) + 1);
+  expect(dirs.indexOf(MFA_VALIDATE_MIGRATION)).toBe(dirs.indexOf(MFA_TOTP_MIGRATION) + 1);
   return dirs.filter(
     (d) =>
       d !== TASK_SYNC_MIGRATION &&
@@ -211,6 +229,9 @@ const orderedDirs = () => {
       d !== OUTBOX_DEDUPE_KEY_INDEX_MIGRATION &&
       d !== USER_GOOGLE_SUB_MIGRATION &&
       d !== GOOGLE_OIDC_HARDENING_MIGRATION &&
+      d !== MFA_TOTP_MIGRATION &&
+      d !== MFA_VALIDATE_MIGRATION &&
+      d !== CONSENT_SETTINGS_MIGRATION &&
       !(PARALLEL_MIGRATIONS as readonly string[]).includes(d),
   );
 };
@@ -262,6 +283,11 @@ const adr010Sql =
 /** Phase 3 per-recording transcript revision migration. */
 const TRANSCRIPT_REVISION_MIGRATION_DIR = '20261026200000_transcript_recording_revision';
 const consentSql = readFileSync(resolve(migrationsDir, CONSENT_MIGRATION, 'migration.sql'), 'utf8');
+/** ADR-021 MFA tables (user-scoped RLS) and the MFA global-audit allowlist. */
+const mfaSql = readFileSync(
+  resolve(migrationsDir, '20261111180000_mfa_totp', 'migration.sql'),
+  'utf8',
+);
 const rlsSql =
   readFileSync(resolve(migrationsDir, '20261021110000_tenant_rls_roles/migration.sql'), 'utf8') +
   laterTenantSql +
@@ -313,12 +339,16 @@ const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)].map((m) => 
   return { name: m[1] ?? '', table: /@@map\("(\w+)"\)/.exec(body)?.[1] ?? '', body };
 });
 const tenantModels = models.filter((m) => /^\s+organizationId\s/m.test(m.body));
+/** ADR-021: user-scoped tables (no org_id), forced RLS on app.current_user_id. */
+const USER_SCOPED_TABLES = [...USER_TABLES] as string[];
 const GLOBAL_TABLES = [
   'organizations',
   'users',
   'sessions',
   'email_verifications',
   'password_resets',
+  // ADR-021 OQ-17: login MFA challenges, looked up by token hash before any user context (like password_resets).
+  'mfa_challenges',
 ];
 /** Tenant tables whose org_id may be NULL (global auth audit events). */
 const NULLABLE_ORG = ['audit_events'];
@@ -327,7 +357,9 @@ describe('tenant schema', () => {
   it('every table is either a tenant table or an explicitly reviewed global table', () => {
     const tenant = tenantModels.map((m) => m.table).sort();
     expect(tenant).toEqual([...TENANT_TABLES].sort());
-    const others = models.map((m) => m.table).filter((t) => !tenant.includes(t));
+    const others = models
+      .map((m) => m.table)
+      .filter((t) => !tenant.includes(t) && !USER_SCOPED_TABLES.includes(t));
     expect(others.sort()).toEqual([...GLOBAL_TABLES].sort());
   });
 
@@ -407,6 +439,79 @@ describe('RLS migration', () => {
     }
     expect(policySql).toContain(
       `CREATE POLICY tenant_isolation ON "${t}"\n  USING (org_id = ${ORG_EXPR})\n  WITH CHECK (org_id = ${ORG_EXPR});`,
+    );
+  });
+
+  it.each(USER_SCOPED_TABLES)(
+    'ADR-021 %s is user-scoped: no org_id, RLS enabled + forced, user_isolation on app.current_user_id',
+    (t) => {
+      const model = models.find((m) => m.table === t);
+      expect(model, t).toBeDefined();
+      expect(model!.body).not.toMatch(/^\s+organizationId\s/m);
+      expect(model!.body).toMatch(/^\s+userId\s+String\s+@map\("user_id"\) @db\.Uuid/m);
+      expect(mfaSql).toContain(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY;`);
+      expect(mfaSql).toContain(`ALTER TABLE "${t}" FORCE ROW LEVEL SECURITY;`);
+      const expr = "user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid";
+      expect(mfaSql).toContain(
+        `CREATE POLICY user_isolation ON "${t}"\n  USING (${expr})\n  WITH CHECK (${expr});`,
+      );
+    },
+  );
+
+  it('ADR-021 MFA migration: auth_level pinned, one active TOTP per user, MFA audit actions allowlisted', () => {
+    expect(mfaSql).toContain(`CHECK ("auth_level" IN ('password', 'google', 'mfa')) NOT VALID;`);
+    expect(mfaSql).toContain(`CHECK ("mfa_at" IS NULL OR "auth_level" = 'mfa') NOT VALID;`);
+    const validate = readFileSync(
+      resolve(migrationsDir, MFA_VALIDATE_MIGRATION, 'migration.sql'),
+      'utf8',
+    )
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('--'));
+    expect(validate).toEqual([
+      'ALTER TABLE "sessions" VALIDATE CONSTRAINT "sessions_auth_level_check";',
+      'ALTER TABLE "sessions" VALIDATE CONSTRAINT "sessions_mfa_at_level_check";',
+    ]);
+    expect(mfaSql).toContain(
+      `ALTER TABLE "organizations" ADD COLUMN "mfa_required" BOOLEAN NOT NULL DEFAULT false;`,
+    );
+    expect(mfaSql).toContain(
+      `CREATE UNIQUE INDEX "mfa_factors_one_active_totp" ON "mfa_factors"("user_id") WHERE "status" = 'active' AND "type" = 'totp';`,
+    );
+    for (const a of [
+      'auth.mfa_confirmed',
+      'auth.mfa_challenge_failed',
+      'auth.mfa_recovery_code_used',
+    ])
+      expect(mfaSql).toContain(`'${a}'`);
+    expect(mfaSql).toContain(`NOT IN ('user', 'session', 'email', 'mfa_factor')`);
+    expect(mfaSql).toMatch(
+      /REVOKE ALL ON FUNCTION public\.record_global_auth_event\([^)]*\)\s+FROM PUBLIC;/,
+    );
+    expect(mfaSql).not.toMatch(/GRANT (ALL|TRUNCATE|CREATE)[^;]*TO meetops_app/);
+    expect(mfaSql).toContain(`'auth.mfa_lockout'`);
+  });
+
+  it('review #497 L-3: recovery codes reference (factor_id, user_id) of the same user, never factor_id alone', () => {
+    expect(mfaSql).toContain(
+      `CREATE UNIQUE INDEX "mfa_factors_id_user_id_key" ON "mfa_factors"("id", "user_id");`,
+    );
+    expect(mfaSql).toContain(
+      `FOREIGN KEY ("factor_id", "user_id") REFERENCES "mfa_factors"("id", "user_id") ON DELETE CASCADE`,
+    );
+    expect(mfaSql).not.toMatch(/FOREIGN KEY \("factor_id"\) REFERENCES/);
+    expect(schema).toMatch(
+      /factor MfaFactor @relation\(fields: \[factorId, userId\], references: \[id, userId\]/,
+    );
+  });
+
+  it('ADR-021 OQ-17: mfa_challenges is single-purpose, at most 5 minutes, hash-only, global (no RLS)', () => {
+    expect(mfaSql).toContain(`CHECK ("purpose" = 'mfa_challenge')`);
+    expect(mfaSql).toContain(`"expires_at" <= "created_at" + interval '5 minutes'`);
+    expect(mfaSql).toContain(`CHECK ("token_hash" ~ '^[0-9a-f]{64}$')`);
+    expect(mfaSql).toContain(`CHECK ("first_factor" IN ('password', 'google'))`);
+    expect(mfaSql).not.toContain(`ALTER TABLE "mfa_challenges" ENABLE ROW LEVEL SECURITY`);
+    expect(mfaSql).toMatch(
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "mfa_challenges" TO meetops_app;/,
     );
   });
 
@@ -608,6 +713,8 @@ describe('per-org uniqueness (M2)', () => {
         'tokenHash',
         'tokenHash',
         // auth_refresh_tokens.token_hash (ADR-005 A1.2.1): SHA-256 hashes are globally unique.
+        'tokenHash',
+        // mfa_challenges.token_hash (ADR-021 OQ-17): SHA-256 of the login challenge token.
         'tokenHash',
         // users.google_sub is NOT listed: its uniqueness is a partial index over live rows (OIDC review L-1,
         // migration 20261109120000, asserted in "(2b)"), which Prisma 5 cannot express, so the schema has no @unique.
@@ -830,7 +937,7 @@ describe('schema conventions', () => {
   });
 
   it('every model uses a uuid primary key', () => {
-    expect(models).toHaveLength(46);
+    expect(models).toHaveLength(49);
     for (const m of models.filter((x) => !ORGANIZATION_KEYED.includes(x.table)))
       expect(m.body, m.name).toMatch(/^\s+id\s+String\s+@id @default\(uuid\(\)\) @db\.Uuid$/m);
   });
