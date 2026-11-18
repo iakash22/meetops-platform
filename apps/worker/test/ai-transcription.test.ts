@@ -103,6 +103,10 @@ class FakeRepo implements TranscriptRepository {
       latestTranscript: latest,
       getProviderJobId: async (m, r) =>
         list(m, r).find((c) => c.chunk.providerJobId)?.chunk.providerJobId,
+      listProviderJobIds: async (m, r) =>
+        list(m, r)
+          .map((c) => c.chunk.providerJobId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
       writeTranscriptRevision: async (w, prev) => {
         if (w.organizationId !== o) throw new Error('cross-org write');
         if (((await latest(w.meetingId, w.recordingId))?.revision ?? 0) !== prev) return false;

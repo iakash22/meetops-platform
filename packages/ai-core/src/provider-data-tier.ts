@@ -9,6 +9,14 @@
  * Env: `AI_PROVIDER_DATA_TIER_<PROVIDER>=paid|no-training`
  * (hyphens in the provider name become underscores, e.g. FASTER_WHISPER).
  */
+/**
+ * Same allow-list as #375 (`isRelaxedNodeEnv` in @meetops/integrations): only
+ * `development` and `test` are non-production. Unset, typo, staging, etc. fail closed.
+ */
+export function isRelaxedNodeEnv(nodeEnv: string | undefined): boolean {
+  return nodeEnv === 'development' || nodeEnv === 'test';
+}
+
 export const PRODUCTION_DATA_TIERS = ['paid', 'no-training'] as const;
 export type ProductionDataTier = (typeof PRODUCTION_DATA_TIERS)[number];
 
@@ -105,15 +113,16 @@ export class ProductionProviderDataTierError extends Error {
 }
 
 /**
- * In production, refuse to build a registry that would send customer data to an
- * LLM or STT provider whose tier is free or undeclared. Non-production is a no-op.
+ * Refuse to build a registry that would send customer data to an LLM or STT
+ * provider whose tier is free or undeclared, unless NODE_ENV is on the
+ * development/test allow-list (or `opts.production` is explicitly false).
  */
 export function assertProductionProviderDataTiers(
   configs: readonly ProviderDataTierInput[],
   env: Record<string, string | undefined> = {},
   opts: { production?: boolean | undefined } = {},
 ): void {
-  const production = opts.production ?? env.NODE_ENV === 'production';
+  const production = opts.production ?? !isRelaxedNodeEnv(env.NODE_ENV);
   if (!production) return;
   const failed = assessEnabledProviderDataTiers(configs, env).filter((a) => !a.ok);
   if (failed.length === 0) return;

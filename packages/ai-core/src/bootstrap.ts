@@ -11,7 +11,7 @@ import { OllamaProvider } from './adapters/ollama.js';
 import { OpenAICompatibleProvider } from './adapters/openai-compatible.js';
 import { FasterWhisperProvider } from './adapters/faster-whisper.js';
 import { DeepgramProvider } from './adapters/deepgram.js';
-import { assertProductionProviderDataTiers } from './provider-data-tier.js';
+import { assertProductionProviderDataTiers, isRelaxedNodeEnv } from './provider-data-tier.js';
 
 /**
  * Backend-controlled endpoint policy derived from env. Local origins only when that provider is enabled, and
@@ -21,7 +21,7 @@ export function endpointPolicyFromEnv(
   env: AIEnv,
   opts: { production?: boolean | undefined } = {},
 ): EndpointPolicy {
-  const production = opts.production ?? process.env.NODE_ENV === 'production';
+  const production = opts.production ?? !isRelaxedNodeEnv(process.env.NODE_ENV);
   if (production && (env.OLLAMA_ENABLED || env.LOCAL_STT_ENABLED))
     throw new Error(
       'Local AI providers (OLLAMA_ENABLED / LOCAL_STT_ENABLED) are not allowed in production',
@@ -174,11 +174,11 @@ export async function createRegistryFromEnv(
     processEnv?: Record<string, string | undefined> | undefined;
   },
 ) {
-  const policy = endpointPolicyFromEnv(env, { production: deps.production });
+  const processEnv = deps.processEnv ?? process.env;
+  const production = deps.production ?? !isRelaxedNodeEnv(processEnv.NODE_ENV);
+  const policy = endpointPolicyFromEnv(env, { production });
   const configs = defaultProviderConfigs(env);
-  assertProductionProviderDataTiers(configs, deps.processEnv ?? process.env, {
-    production: deps.production,
-  });
+  assertProductionProviderDataTiers(configs, processEnv, { production });
   const reg = new ProviderRegistry(
     defaultAdapterFactories(policy),
     deps.resolveCredential,

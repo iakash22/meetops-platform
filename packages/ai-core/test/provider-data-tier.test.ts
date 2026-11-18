@@ -53,10 +53,12 @@ describe('production provider data-tier guard', () => {
     ).not.toThrow();
   });
 
-  it('does not change non-production behaviour', () => {
-    expect(() => assertProductionProviderDataTiers(geminiAndAssemblyFree, {})).not.toThrow();
+  it('relaxes the guard only for development and test', () => {
     expect(() =>
       assertProductionProviderDataTiers(geminiAndAssemblyFree, { NODE_ENV: 'development' }),
+    ).not.toThrow();
+    expect(() =>
+      assertProductionProviderDataTiers(geminiAndAssemblyFree, { NODE_ENV: 'test' }),
     ).not.toThrow();
     expect(() =>
       assertProductionProviderDataTiers(
@@ -72,6 +74,21 @@ describe('production provider data-tier guard', () => {
         .map((a) => a.provider)
         .sort(),
     ).toEqual(['assemblyai', 'gemini']);
+  });
+
+  it('fails closed for typo, staging, and unset NODE_ENV', () => {
+    expect(() =>
+      assertProductionProviderDataTiers(geminiAndAssemblyFree, { NODE_ENV: 'produciton' }),
+    ).toThrow(ProductionProviderDataTierError);
+    expect(() =>
+      assertProductionProviderDataTiers(geminiAndAssemblyFree, { NODE_ENV: 'staging' }),
+    ).toThrow(ProductionProviderDataTierError);
+    expect(() => assertProductionProviderDataTiers(geminiAndAssemblyFree, {})).toThrow(
+      ProductionProviderDataTierError,
+    );
+    expect(() =>
+      assertProductionProviderDataTiers(geminiAndAssemblyFree, { NODE_ENV: undefined }),
+    ).toThrow(ProductionProviderDataTierError);
   });
 
   it('skips disabled providers and rejects an invalid declaration in production', () => {
