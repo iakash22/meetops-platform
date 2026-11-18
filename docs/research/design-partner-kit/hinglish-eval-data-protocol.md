@@ -295,6 +295,6 @@ any Indic provider joins once its terms are verified.
    only matches English patterns (§8).
 5. Audio masking and its effect on WER (§4.1).
 
-**Counsel** (not added to the legal brief in this PR; for Akash to raise): whether the consent form and Hindi text meet
-s. 5, s. 6 and Rule 3; whether de-identified transcripts can be kept after a speaker withdraws if they no longer
-identify them; and the retention period for consent records.
+**Counsel:** whether the consent form and Hindi text meet s. 5, s. 6 and Rule 3; whether de-identified transcripts can
+be kept after a speaker withdraws if they no longer identify them; and the retention period for consent records. These
+are now questions 26–28 in [legal-questions-brief.md](../legal-questions-brief.md) §5.
