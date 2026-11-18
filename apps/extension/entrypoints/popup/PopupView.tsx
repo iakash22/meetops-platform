@@ -124,7 +124,7 @@ export const PairingView = memo(function PairingView({ auth, onPair, onUnpair }:
     return (
       <section className="mo-section" aria-label="Account pairing">
         <div className="mo-callout mo-callout--warning" role="alert" aria-label="Sign-in required">
-          <p className="mo-callout__title">Sign in again to keep uploading</p>
+          <p className="mo-callout__title">Sign in again to keep recording</p>
           <p>{`${why} Pair again to continue.`}</p>
           <p className="mo-muted">
             Recordings already on this device stay queued and upload after you pair again.

@@ -72,6 +72,18 @@ writeFileSync(path.join(process.cwd(), 'dist', 'index.d.ts'), 'export {}\\n');
 writeFileSync(path.join(process.cwd(), 'dist', 'types.d.ts'), 'export {}\\n');
 `;
 
+const INCOMPLETE_TSC = `#!/usr/bin/env node
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import path from 'node:path';
+const stamp = process.env.TSC_STAMP;
+if (stamp) appendFileSync(stamp, 'ran\\n');
+mkdirSync(path.join(process.cwd(), 'dist'), { recursive: true });
+writeFileSync(path.join(process.cwd(), 'dist', 'index.js'), '');
+writeFileSync(path.join(process.cwd(), 'dist', 'types.js'), '');
+writeFileSync(path.join(process.cwd(), 'dist', 'index.d.ts'), '');
+writeFileSync(path.join(process.cwd(), 'dist', 'types.d.ts'), '');
+`;
+
 function layoutScript(root: string) {
   const destDir = path.join(root, 'apps', 'extension', 'scripts');
   mkdirSync(destDir, { recursive: true });
@@ -205,6 +217,51 @@ describe('ensure-contracts-dist', () => {
     );
     expect(readFileSync(path.join(distDir, 'types.js'), 'utf8')).toContain(
       "export * from './constants.js'",
+    );
+  });
+
+  it('returns exit 1 when a rebuild still leaves dist incomplete', () => {
+    const root = makeFixture();
+    writeContractsPackage(root);
+    const stamp = path.join(root, 'tsc-stamp');
+    writeFakeTsc(root, INCOMPLETE_TSC);
+    const script = layoutScript(root);
+
+    const result = spawnSync(process.execPath, [script], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, TSC_STAMP: stamp },
+    });
+    expect(result.status, result.stderr + result.stdout).toBe(1);
+    expect(readFileSync(stamp, 'utf8').trim().split('\n')).toEqual(['ran']);
+    expect(result.stderr + result.stdout).toMatch(
+      /still missing, empty, or missing expected exports/,
+    );
+  });
+
+  it('returns exit 1 when the full script rebuilds a truncated dist that stays incomplete', () => {
+    const root = makeFixture();
+    const contractsDir = writeContractsPackage(root);
+    const stamp = path.join(root, 'tsc-stamp');
+    writeFakeTsc(root, INCOMPLETE_TSC);
+    const script = layoutScript(root);
+    const distDir = path.join(contractsDir, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(path.join(distDir, 'index.js'), "export * from './forma");
+    writeFileSync(path.join(distDir, 'types.js'), "export * from './const");
+    writeFileSync(path.join(distDir, 'index.d.ts'), 'export {}\n');
+    writeFileSync(path.join(distDir, 'types.d.ts'), 'export {}\n');
+
+    const result = spawnSync(process.execPath, [script], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, TSC_STAMP: stamp },
+    });
+    expect(result.status, result.stderr + result.stdout).toBe(1);
+    expect(readFileSync(stamp, 'utf8').trim().split('\n')).toEqual(['ran']);
+    expect(readFileSync(path.join(distDir, 'index.js'), 'utf8')).toBe('');
+    expect(result.stderr + result.stdout).toMatch(
+      /still missing, empty, or missing expected exports/,
     );
   });
 });

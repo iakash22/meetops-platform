@@ -317,7 +317,9 @@ const searchRoute = createRoute({
     return (
       <SearchPage
         search={search}
-        onSearchChange={(next) => void navigate({ search: next, replace: true })}
+        // Push (not replace) so semantic/q/kind changes stay back/forward-safe
+        // and a copied /search URL can be restored from history.
+        onSearchChange={(next) => void navigate({ search: next })}
       />
     );
   },

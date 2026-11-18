@@ -5,6 +5,7 @@ import type { SearchResponse, SemanticSearchResponse } from '@meetops/contracts'
 import { ApiError } from '@/lib/api/client';
 import {
   createHttpSearchApi,
+  parseSearchPageSearch,
   semanticKindFor,
   setSearchApiOverride,
   type SearchApi,
@@ -121,5 +122,85 @@ describe('/search semantic toggle', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Semantic' }));
     expect(await screen.findByText(/covers transcripts and summaries/)).toBeInTheDocument();
     expect(semantic).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Semantic toggle outside the type filter group', async () => {
+    const { api } = mockApi(() => Promise.resolve(semanticRes));
+    setSearchApiOverride(api);
+    renderApp('/search?q=billing');
+    const group = await screen.findByRole('group', { name: 'Filter by type' });
+    expect(within(group).queryByRole('button', { name: 'Semantic' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Semantic' })).toBeInTheDocument();
+  });
+
+  it('persists semantic mode in the URL so copied links and back/forward keep it', async () => {
+    const { api, semantic } = mockApi(() => Promise.resolve(semanticRes));
+    setSearchApiOverride(api);
+    const { history } = renderApp('/search?q=billing');
+    await userEvent.click(await screen.findByRole('button', { name: 'Semantic' }));
+    await screen.findByRole('list', { name: 'Semantic results' });
+    expect(history.location.search).toMatch(/semantic=true/);
+    expect(parseSearchPageSearch({ q: 'billing', semantic: 'true' })).toEqual({
+      q: 'billing',
+      kind: undefined,
+      semantic: true,
+    });
+    expect(parseSearchPageSearch({ q: 'billing', semantic: '1' })).toEqual({
+      q: 'billing',
+      kind: undefined,
+      semantic: true,
+    });
+    history.back();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Semantic' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      ),
+    );
+    expect(history.location.search).not.toMatch(/semantic=/);
+    expect(screen.getByRole('list', { name: 'Search results' })).toBeInTheDocument();
+    history.forward();
+    await screen.findByRole('list', { name: 'Semantic results' });
+    expect(screen.getByRole('button', { name: 'Semantic' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(semantic).toHaveBeenCalled();
+  });
+
+  it('turns semantic mode on from a copied /search URL', async () => {
+    const { api, semantic } = mockApi(() => Promise.resolve(semanticRes));
+    setSearchApiOverride(api);
+    renderApp('/search?q=billing&semantic=true');
+    await screen.findByRole('list', { name: 'Semantic results' });
+    expect(screen.getByRole('button', { name: 'Semantic' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(semantic).toHaveBeenCalledWith(ORG, 'billing', undefined);
+  });
+
+  it('stays on ErrorState and does not fall back to keyword search for a non-404 semantic error', async () => {
+    const { api, semantic } = mockApi(() =>
+      Promise.reject(new ApiError(500, 'INTERNAL', 'boom', 'r2')),
+    );
+    setSearchApiOverride(api);
+    renderApp('/search?q=billing&semantic=true');
+    expect(await screen.findByTestId('error-state')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.queryByText('Keyword hit')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Search results' })).not.toBeInTheDocument();
+    expect(semantic).toHaveBeenCalled();
+  });
+
+  it('sends kind=transcript or kind=summary on the page-level semantic request', async () => {
+    const { api, semantic } = mockApi(() => Promise.resolve(semanticRes));
+    setSearchApiOverride(api);
+    const { unmount } = renderApp('/search?q=billing&kind=transcript&semantic=true');
+    await waitFor(() => expect(semantic).toHaveBeenCalledWith(ORG, 'billing', ['transcript']));
+    unmount();
+    semantic.mockClear();
+    renderApp('/search?q=billing&kind=summary&semantic=true');
+    await waitFor(() => expect(semantic).toHaveBeenCalledWith(ORG, 'billing', ['summary']));
   });
 });

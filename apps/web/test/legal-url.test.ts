@@ -12,6 +12,7 @@ describe('isSafeLegalUrl', () => {
     expect(isSafeLegalUrl('')).toBe(false);
     expect(isSafeLegalUrl('http://x.test/privacy')).toBe(false);
     expect(isSafeLegalUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeLegalUrl('//x.test/privacy')).toBe(false);
   });
 });
 
@@ -29,5 +30,11 @@ describe('missingPrivacyUrlWarning', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     if (message) console.warn(message);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the value is unsafe when it is set but rejected', () => {
+    expect(missingPrivacyUrlWarning('//x.test/privacy')).toMatch(/VITE_PRIVACY_URL is unsafe/);
+    expect(missingPrivacyUrlWarning('http://x.test/privacy')).toMatch(/VITE_PRIVACY_URL is unsafe/);
+    expect(missingPrivacyUrlWarning(undefined)).not.toMatch(/unsafe/);
   });
 });

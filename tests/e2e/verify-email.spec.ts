@@ -157,7 +157,7 @@ test.describe('/verify-email', () => {
     const problem = page.getByRole('alert');
     await expect(problem).toBeVisible();
     await expect(problem).toContainText('This verification link is incomplete');
-    // Problem is a role=alert box; it is not auto-focused in the current UI.
+    await expect(problem).toBeFocused();
     await expect(page.getByRole('button', { name: 'Verify email' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Send a new verification link' })).toHaveAttribute(
       'href',
@@ -178,6 +178,7 @@ test.describe('/verify-email', () => {
     const problem = page.getByRole('alert');
     await expect(problem).toBeVisible();
     await expect(problem).toContainText('This verification link is invalid or has expired');
+    await expect(problem).toBeFocused();
     await expect(page.getByRole('link', { name: 'Send a new verification link' })).toHaveAttribute(
       'href',
       '/resend-verification',

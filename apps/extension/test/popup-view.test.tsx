@@ -236,7 +236,9 @@ describe('popup UI pass: status, re-auth, a11y', () => {
       /class="mo-callout mo-callout--warning" role="alert" aria-label="Sign-in required"/,
     );
     expect(html).toContain('Your sign-in was revoked. Pair again to continue.');
+    expect(html).toContain('Sign in again to keep recording');
     expect(html).toContain('stay queued and upload after you pair again');
+    expect(html).not.toContain('uploading');
     expect(html).not.toContain('mo-callout--error');
   });
 

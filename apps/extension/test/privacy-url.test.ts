@@ -11,6 +11,7 @@ describe('privacy URL helpers', () => {
     expect(isSafePrivacyUrl('/legal/privacy')).toBe(true);
     expect(isSafePrivacyUrl('http://example.com/privacy')).toBe(false);
     expect(isSafePrivacyUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafePrivacyUrl('//example.com/privacy')).toBe(false);
     expect(isSafePrivacyUrl(undefined)).toBe(false);
     expect(isSafePrivacyUrl('')).toBe(false);
   });
@@ -30,9 +31,11 @@ describe('privacy URL helpers', () => {
     expect(missingPrivacyUrlWarning('https://x.test/privacy')).toBeUndefined();
     expect(missingPrivacyUrlWarning('/privacy')).toBeUndefined();
     expect(missingPrivacyUrlWarning(undefined)).toMatch(/WXT_PRIVACY_URL is not set/);
+    expect(missingPrivacyUrlWarning(undefined)).not.toMatch(/unsafe/);
     expect(missingPrivacyUrlWarning('http://insecure.test/privacy')).toMatch(
-      /WXT_PRIVACY_URL is not set/,
+      /WXT_PRIVACY_URL is unsafe/,
     );
+    expect(missingPrivacyUrlWarning('//example.com/privacy')).toMatch(/WXT_PRIVACY_URL is unsafe/);
   });
 });
 
