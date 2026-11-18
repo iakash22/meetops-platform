@@ -127,9 +127,8 @@ export class UploadService {
       // deterministic job id (a no-op while that job exists), so the upload can never be stuck in processing.
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
-        await this.d.consentVersion(f.organizationId),
       );
-      await enforceMeetingConsent(this.d, f.organizationId, f.meetingId);
+      await enforceMeetingConsent(this.d, f.organizationId, f.meetingId, 'in_flight');
       await this.enqueue(f, consent.id, true);
       return { ...f };
     }
@@ -148,9 +147,8 @@ export class UploadService {
     }
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(f.organizationId, 'upload', f.id),
-      await this.d.consentVersion(f.organizationId),
     );
-    await enforceMeetingConsent(this.d, f.organizationId, f.meetingId);
+    await enforceMeetingConsent(this.d, f.organizationId, f.meetingId, 'in_flight');
     await this.d.files.setStatus(f.organizationId, f.id, 'processing', 'pending');
     await this.enqueue(f, consent.id);
     return { ...f, status: 'processing', scanStatus: 'pending' };

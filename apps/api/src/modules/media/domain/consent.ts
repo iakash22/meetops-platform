@@ -87,16 +87,15 @@ export function checkConsentInput(
 }
 
 /**
- * Re-checks a stored attestation before any processing job is queued. `acceptedVersion` is the org's current version
- * (ConsentVersionResolver), so a notice edit after the attestation was recorded also rejects it.
+ * Re-checks a stored attestation before any processing job is queued. In-flight subjects are grandfathered: the
+ * stored version was checked against the org's current version (under RLS) when the attestation was created, so it
+ * is NOT re-checked against today's version and a later notice edit never 422s or skips the upload. The version
+ * always comes from this server-stored row (never from the complete/replay request) and stays on the receipt.
  */
-export function checkStoredConsent(
-  r: ConsentRecord | null,
-  acceptedVersion: string,
-): ConsentRecord {
+export function checkStoredConsent(r: ConsentRecord | null): ConsentRecord {
   if (!r) throw new ConsentRejectedError('CONSENT_REQUIRED');
-  if (r.consentVersion !== acceptedVersion) {
-    throw new ConsentRejectedError('CONSENT_VERSION_UNSUPPORTED');
+  if (typeof r.consentVersion !== 'string' || r.consentVersion.length === 0) {
+    throw new ConsentRejectedError('CONSENT_INVALID');
   }
   if (
     r.attestedAt.getTime() > r.recordedAt.getTime() + skewMs ||

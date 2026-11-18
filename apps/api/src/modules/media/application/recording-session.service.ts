@@ -124,8 +124,8 @@ export class RecordingSessionService {
     const s = await this.own(c, id);
     await afterOwn?.();
     RecordingSessionService.assertUploading(s);
-    // A revocation mid-recording stops new chunk URLs (fail closed) while enforcement is on.
-    await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
+    // A revocation mid-recording stops new chunk URLs (fail closed) while enforcement is on; a notice edit does not.
+    await enforceMeetingConsent(this.d, s.organizationId, s.meetingId, 'in_flight');
     const key = `organizations/${s.organizationId}/recording-sessions/${s.id}/chunks/${String(body.seq).padStart(5, '0')}`;
     const res = await this.d.sessions.reserveChunk(
       s.organizationId,
@@ -162,18 +162,16 @@ export class RecordingSessionService {
       if (!s.sourcePending) return s;
       const consent = checkStoredConsent(
         await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
-        await this.d.consentVersion(s.organizationId),
       );
-      await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
+      await enforceMeetingConsent(this.d, s.organizationId, s.meetingId, 'in_flight');
       await this.enqueue(s, consent.id, true);
       return s;
     }
     RecordingSessionService.assertUploading(s);
     const consent = checkStoredConsent(
       await this.d.consents.findLatest(s.organizationId, 'recording_session', s.id),
-      await this.d.consentVersion(s.organizationId),
     );
-    await enforceMeetingConsent(this.d, s.organizationId, s.meetingId);
+    await enforceMeetingConsent(this.d, s.organizationId, s.meetingId, 'in_flight');
     if (s.chunks.size !== body.chunkCount) {
       throw new ChunkSetInvalidError(
         `Expected ${s.chunks.size} chunks, got chunkCount ${body.chunkCount}`,

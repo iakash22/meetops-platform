@@ -160,12 +160,16 @@ describe('uploads (init, complete, download-url)', () => {
     expect(w.jobs.jobs).toHaveLength(0);
   });
 
-  it('complete with a stored attestation of an unsupported version or skewed time -> 422 and no job', async () => {
+  it('complete grandfathers the stored version but rejects a skewed time (422, no job)', async () => {
+    // The stored version was checked when the attestation was created; a later notice edit is not re-checked.
     const a = await init();
     w.signer.put(keyOf(a.fileObjectId), 1000);
     w.consents.rows[0]!.consentVersion = 'old-1';
     const r1 = await w.member.post(`${url()}/${a.fileObjectId}/complete`, {});
-    expect(errorOf(r1).reason).toBe('CONSENT_VERSION_UNSUPPORTED');
+    expect(r1.statusCode, JSON.stringify(r1.json())).toBe(200);
+    expect(w.consents.rows[0]!.consentVersion).toBe('old-1');
+    expect(w.jobs.jobs).toHaveLength(1);
+    w.jobs.jobs.length = 0;
     const b = await init();
     w.signer.put(keyOf(b.fileObjectId), 1000);
     const row = w.consents.rows.at(-1)!;

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { CURRENT_CONSENT_VERSION } from '@meetops/contracts';
 import { orgConsentVersion } from '../src/modules/consent-settings/domain/consent-settings.js';
 import { InMemoryConsentSettingsRepository } from '../src/modules/consent-settings/infrastructure/in-memory.repository.js';
+import { reconcileStaleMedia } from '../src/modules/media/application/reconcile.js';
 import { consent, errorOf, mediaWorld, SHA_B64 } from './media-helpers.js';
 import type { Client } from './helpers.js';
 
@@ -116,15 +117,53 @@ describe('org consent version (server-side, per org)', () => {
     unsupported(await w.grant(w.other, w.otherOrg, w.otherMeetingId, v2));
   });
 
-  it('a notice edit after init rejects the stored attestation at complete (422, no job)', async () => {
+  it('(a) an upload in flight across a notice edit completes (2xx) and keeps its original version', async () => {
     const w = await setup();
     const init = await w.upload(w.member, w.org, CURRENT_CONSENT_VERSION);
     expect(init.statusCode).toBe(201);
     const { fileObjectId } = init.json<{ fileObjectId: string }>();
     w.signer.put(`organizations/${w.org}/uploads/${fileObjectId}/source`, 1000);
-    await w.editNotice('Edited after the upload started.');
-    unsupported(await w.member.post(`/orgs/${w.org}/uploads/${fileObjectId}/complete`, {}));
-    expect(w.jobs.jobs).toHaveLength(0);
+    const v2 = await w.editNotice('Edited after the upload started.');
+    expect(v2).not.toBe(CURRENT_CONSENT_VERSION);
+    // A client cannot swap in another version at complete: the body is not a version source (extra fields are 400).
+    const forged = await w.member.post(`/orgs/${w.org}/uploads/${fileObjectId}/complete`, {
+      consent: consent({ consentVersion: v2 }),
+    });
+    expect(forged.statusCode).toBe(400);
+    const done = await w.member.post(`/orgs/${w.org}/uploads/${fileObjectId}/complete`, {});
+    expect(done.statusCode, JSON.stringify(done.json())).toBe(200);
+    const receipt = w.consents.rows.find((r) => r.subjectId === fileObjectId)!;
+    expect(receipt.consentVersion).toBe(CURRENT_CONSENT_VERSION);
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({
+        kind: 'process_upload',
+        subjectId: fileObjectId,
+        consentAttestationId: receipt.id,
+      }),
+    ]);
+  });
+
+  it('(a) the reconciler processes a grandfathered upload instead of skipping it', async () => {
+    const w = await setup();
+    const init = await w.upload(w.member, w.org, CURRENT_CONSENT_VERSION);
+    const { fileObjectId } = init.json<{ fileObjectId: string }>();
+    await w.editNotice('Edited while the upload was processing.');
+    const receipt = w.consents.rows.find((r) => r.subjectId === fileObjectId)!;
+    const r = await reconcileStaleMedia({
+      store: {
+        organizationIds: async () => [w.org],
+        staleUploads: async () => [{ id: fileObjectId, meetingId: null }],
+      },
+      consents: w.consents,
+      jobs: w.jobs,
+      now: () => new Date(),
+      olderThanMs: 0,
+    });
+    expect(r).toEqual({ organizations: 1, uploads: 1, sessions: 0, skipped: 0 });
+    expect(w.jobs.jobs).toEqual([
+      expect.objectContaining({ subjectId: fileObjectId, consentAttestationId: receipt.id }),
+    ]);
+    expect(receipt.consentVersion).toBe(CURRENT_CONSENT_VERSION);
   });
 
   it('with enforcement on, a grant for a superseded version no longer allows capture', async () => {

@@ -69,12 +69,18 @@ export async function enforceMeetingConsent(
   g: MeetingConsentGate,
   organizationId: string,
   meetingId: string | null | undefined,
+  /**
+   * 'current' (new capture: init) requires a grant for the org's current version. 'in_flight' (chunk URLs, complete,
+   * replay of an already-started subject) accepts the latest grant whatever its version, since that version was
+   * checked when the grant was recorded; a revocation still rejects.
+   */
+  version: 'current' | 'in_flight' = 'current',
 ): Promise<void> {
   if (g.consentEnforcement !== true) return;
   if (!meetingId || !g.meetingConsents) throw new ConsentRejectedError('CONSENT_REQUIRED');
   const [latest] = await g.meetingConsents.list(organizationId, meetingId, 1);
   if (!latest || latest.eventType !== 'granted') throw new ConsentRejectedError('CONSENT_REQUIRED');
-  if (latest.consentVersion !== (await g.consentVersion(organizationId))) {
+  if (version === 'current' && latest.consentVersion !== (await g.consentVersion(organizationId))) {
     throw new ConsentRejectedError('CONSENT_VERSION_UNSUPPORTED');
   }
 }
